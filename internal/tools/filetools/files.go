@@ -116,6 +116,9 @@ func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 
 func writeFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	rawPath := tools.StringArg(args, "path", "")
+	if scopeError := ctx.WritePathError(rawPath); scopeError != "" {
+		return tools.Fail("write_file", scopeError)
+	}
 	path, err := ctx.Policy.SafePath(rawPath)
 	if err != nil {
 		return tools.Fail("write_file", err.Error())

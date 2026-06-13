@@ -63,6 +63,9 @@ func splitPatchLines(patch string) []string {
 }
 
 func (p *Parser) patchPath(raw string) (string, error) {
+	if scopeError := p.ctx.WritePathError(raw); scopeError != "" {
+		return "", fmt.Errorf("%s", scopeError)
+	}
 	return p.ctx.Policy.SafePath(raw)
 }
 

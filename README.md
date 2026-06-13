@@ -1,22 +1,21 @@
 # madharness-mini-go
 
-> Учебная ветка: `05-mcp`
+> Учебная ветка: `06-subagents`
 >
-> Тема главы: подключение внешних инструментов через минимальный stdio MCP
-> client без runtime-зависимостей.
+> Тема главы: markdown-субагенты, роли и оркестрация внутри одного harness.
 >
-> В этой точке Go harness умеет читать `.madharness-mini/mcp.json`, запускать
-> явно включённые MCP-серверы, получать `tools/list` и отдавать модели MCP tools
-> как обычные `tools.Spec` с префиксом `mcp__server__tool`.
+> В этой точке parent agent может получить инструмент `delegate_task`, запускать
+> встроенных или project-local субагентов, передавать им ограниченный набор
+> tools и получать отдельные дочерние trace-файлы.
 >
 > Лабораторные работы: [LABS.md](LABS.md)
-> Предыдущая ветка: `04-Agents-Skills`
-> Следующая ветка: `06-subagents`
+> Предыдущая ветка: `05-mcp`
+> Следующая ветка: `07-hooks`
 
-`madharness-mini-go` — учебный минималистичный harness для работы кодирующего
-ИИ-агента с локальным программным продуктом. Он показывает, как локальный
-agent loop можно расширить внешними инструментами, не превращая учебный проект
-в тяжёлый SDK.
+`madharness-mini-go` - учебный минималистичный harness для работы кодирующего
+ИИ-агента с локальным программным продуктом. Этот Go-порт показывает, как один
+agent loop можно превратить в маленькую оркестрацию ролей, не добавляя внешних
+runtime-зависимостей.
 
 Проект написан для Go 1.25 и использует только стандартную библиотеку. Внутри
 используется OpenAI-совместимый API `/chat/completions`, поэтому можно
@@ -25,20 +24,19 @@ agent loop можно расширить внешними инструмента
 
 ## Что есть в этой ветке
 
-- команды `init`, `ask`, `run`, `trace` и `skills`;
+- команды `init`, `ask`, `run`, `trace`, `skills` и `subagents`;
 - проектные инструкции `AGENTS.md`;
 - слой контекста с бюджетом и `context_report`;
 - project-local Agent Skills и `activate_skill`;
-- инструмент `read_image` для моделей с vision input;
-- базовые инструменты workspace: `list_files`, `read_file`, `write_file`,
-  `search_code`, `apply_patch`, `run_shell`;
-- пакет `internal/mcp` со stdio transport, JSON-RPC, provider-ом tools и
-  адаптером результатов;
-- отдельный файл `.madharness-mini/mcp.json` для MCP-серверов;
-- нормализация MCP `tools/call` в обычное observation harness.
+- stdio MCP tools через `.madharness-mini/mcp.json`;
+- встроенные роли `researcher`, `planner`, `implementer`, `reviewer`;
+- project-local субагенты в `.madharness-mini/subagents/<name>.md`;
+- режимы оркестрации `off`, `requested`, `auto`, `required`;
+- инструменты `delegate_task` и, для разрешённых ролей, `ask_user`;
+- отдельные дочерние traces для запусков субагентов.
 
-В этой ветке ещё нет субагентов и hooks. MCP здесь изучается как отдельный
-источник инструментов, а не как система оркестрации ролей.
+В этой ветке ещё нет hooks. Здесь важны роли, profiles, allow-list tools и
+передача результата обратно parent agent.
 
 ## Быстрый запуск
 
@@ -63,36 +61,52 @@ go run ./cmd/madharness-mini init \
 go run ./cmd/madharness-mini init --no-prompt
 ```
 
-## Подключение MCP-сервера
+## Оркестрация
 
-Создайте `.madharness-mini/mcp.json`:
+По умолчанию используется режим `auto`: parent agent видит `delegate_task`, но
+может решить небольшую задачу сам.
 
-```json
-{
-  "servers": {
-    "playwright": {
-      "enabled": true,
-      "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
-      "cwd": ".",
-      "timeout_seconds": 30
-    }
-  }
-}
+Для одного запуска режим можно выбрать флагом:
+
+```bash
+go run ./cmd/madharness-mini run --no-orchestrate "Обнови короткий текст"
+go run ./cmd/madharness-mini run --orchestration requested "Используй субагентов для ревью"
+go run ./cmd/madharness-mini run --orchestrate-required "Разбей задачу между ролями"
 ```
 
-Если файла нет, MCP выключен. Harness запускает только явно включённые серверы.
-Команда и аргументы передаются в subprocess списком, без shell-строки.
-
-После `initialize` harness вызывает `tools/list`. Например MCP tool
-`browser_navigate` сервера `playwright` станет tool name:
+В `.env` тот же выбор задаётся так:
 
 ```text
-mcp__playwright__browser_navigate
+MADHARNESS_MINI_ORCHESTRATION_MODE=requested
 ```
 
-Для модели это обычный инструмент с JSON Schema, а результат `tools/call`
-приводится к обычному observation.
+Проверить встроенные и project-local роли:
+
+```bash
+go run ./cmd/madharness-mini subagents list
+go run ./cmd/madharness-mini subagents validate
+```
+
+## Project-local субагент
+
+Создайте `.madharness-mini/subagents/test-writer.md`:
+
+```md
+---
+name: test-writer
+description: Пишет минимальные Go-тесты для изменённого кода.
+profile: writable
+tools: ["list_files", "read_file", "search_code", "apply_patch", "write_file", "run_shell", "ask_user"]
+max_turns: 10
+---
+
+Ты субагент test-writer.
+Пиши маленькие тесты рядом с существующими Go-тестами.
+Если не хватает требований, задай один короткий вопрос через ask_user.
+```
+
+`profile` не выдаёт полномочия сам по себе. Фактический набор доступных tools
+задаётся списком `tools`.
 
 ## Документация ветки
 
@@ -101,6 +115,7 @@ mcp__playwright__browser_navigate
 - [Слой контекста](docs/context-layer.md)
 - [Agent Skills](docs/agent-skills.md)
 - [MCP](docs/mcp.md)
+- [Субагенты](docs/subagents.md)
 - [Инструмент apply_patch](docs/apply-patch.md)
 
 ## Разработка самого проекта
@@ -115,13 +130,14 @@ go test ./...
 Быстрая ручная проверка CLI:
 
 ```bash
-go run ./cmd/madharness-mini run "Найди доступные инструменты и объясни, что они делают"
+go run ./cmd/madharness-mini subagents list
+go run ./cmd/madharness-mini subagents validate
 ```
 
 ## Что дальше
 
-Следующая ветка `06-subagents` добавляет оркестрацию ролей: parent agent сможет
-делегировать задачи встроенным markdown-субагентам.
+Следующая ветка `07-hooks` добавляет lifecycle hooks: локальные команды проекта
+смогут наблюдать события harness и блокировать tool call до выполнения.
 
 ## Лицензирование
 

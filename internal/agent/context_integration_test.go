@@ -63,7 +63,7 @@ func TestRunClipsLargeToolOutputBeforeNextModelCall(t *testing.T) {
 		{"choices": []any{map[string]any{"message": map[string]any{"content": "done"}}}},
 	}}
 
-	result, _, err := runWithClient("read huge file", cfg, client)
+	result, _, err := runWithClientOptions("read huge file", cfg, client, RunOptions{OrchestrationMode: "off"})
 	if err != nil {
 		t.Fatal(err)
 	}

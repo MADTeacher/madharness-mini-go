@@ -66,11 +66,48 @@ func TestSummaryTruncatesUTF8Safely(t *testing.T) {
 	}
 }
 
+func TestSummarizePrefersExactParentTraceAndShowsSubagents(t *testing.T) {
+	cfg := testTraceConfig(t)
+	parent, err := New(cfg, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := parent.Child("subagent", "subagent-reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Write("session_end", map[string]any{"result": "child result"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Write("subagent_started", map[string]any{"name": "reviewer", "trace_id": child.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Write("subagent_finished", map[string]any{"name": "reviewer", "status": "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := parent.Write("session_end", map[string]any{"result": "parent result"}); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := Summarize(cfg, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "result: parent result") || strings.Contains(summary, "child result") {
+		t.Fatalf("summary = %s", summary)
+	}
+	if !strings.Contains(summary, "subagents: events 2; names reviewer") {
+		t.Fatalf("summary = %s", summary)
+	}
+}
+
 func testTraceConfig(t *testing.T) *config.Config {
 	t.Helper()
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
+	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

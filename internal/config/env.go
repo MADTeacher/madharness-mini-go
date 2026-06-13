@@ -24,6 +24,20 @@ func (c *Config) applyEnv() error {
 	if value := env["MADHARNESS_MINI_API_KEY"]; value != "" {
 		c.Data.APIKey = value
 	}
+	if value := env["MADHARNESS_MINI_ORCHESTRATION_ENABLED"]; value != "" {
+		parsed, err := parseBoolEnv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", value)
+		if err != nil {
+			return err
+		}
+		c.Data.OrchestrationEnabled = parsed
+	}
+	if value := env["MADHARNESS_MINI_ORCHESTRATION_MODE"]; value != "" {
+		mode := strings.ToLower(strings.TrimSpace(value))
+		if !OrchestrationModeValues[mode] {
+			return fmt.Errorf("invalid MADHARNESS_MINI_ORCHESTRATION_MODE: %s; allowed: auto, off, requested, required", mode)
+		}
+		c.Data.OrchestrationMode = mode
+	}
 	if value := env["MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT"]; value != "" {
 		parsed, err := parseBoolEnv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", value)
 		if err != nil {

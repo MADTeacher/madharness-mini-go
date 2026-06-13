@@ -1,57 +1,71 @@
 # Возможности ветки
 
-`05-mcp` добавляет внешние tools через минимальный stdio MCP client. Для модели
-MCP-инструмент выглядит как обычный tool, а для harness это отдельный provider,
-который управляет процессом и JSON-RPC.
+`06-subagents` добавляет оркестрацию markdown-субагентов. Parent agent может
+делегировать подзадачу роли, которая получает отдельный prompt, allow-list tools,
+лимиты и собственный trace.
 
 ## Команды CLI
 
 | Команда | Что делает |
 | --- | --- |
 | `madharness-mini init` | Создаёт или обновляет `.madharness-mini/config.json`. |
-| `madharness-mini ask "..."` | Отправляет один запрос модели без tools, skills catalog и MCP. |
-| `madharness-mini run "..."` | Запускает agent loop с базовыми tools, skills и MCP. |
+| `madharness-mini ask "..."` | Отправляет один запрос модели без tools. |
+| `madharness-mini run "..."` | Запускает parent agent loop. |
 | `madharness-mini trace <id>` | Показывает краткую сводку JSONL-трассы. |
 | `madharness-mini skills list/show/validate` | Диагностирует project-local Agent Skills. |
+| `madharness-mini subagents list/show/validate` | Диагностирует встроенных и project-local субагентов. |
 
 При локальной разработке команда запускается как `go run ./cmd/madharness-mini`.
 
-## MCP tools
+## Оркестрация
 
-Настройки MCP лежат отдельно:
+Режим задаётся полем `orchestration_mode`, переменной
+`MADHARNESS_MINI_ORCHESTRATION_MODE` или CLI-флагами:
+
+| Режим | Поведение |
+| --- | --- |
+| `off` | `delegate_task` не добавляется. |
+| `requested` | Делегация появляется только при явном запросе пользователя. |
+| `auto` | Parent видит `delegate_task`, но может решить задачу сам. |
+| `required` | Parent выступает координатором и делегирует правки ролям. |
+
+## Субагенты
+
+Встроенные роли лежат в `internal/subagents/prompts/subagents/`: `researcher`,
+`planner`, `implementer`, `reviewer`.
+
+Project-local роли добавляются в:
 
 ```text
-.madharness-mini/mcp.json
+.madharness-mini/subagents/<name>.md
 ```
 
-Если файла нет, MCP выключен. Harness запускает только серверы с
-`enabled: true`. Поддерживается stdio transport и tools API: `initialize`,
-`tools/list`, `tools/call`.
+Frontmatter задаёт `name`, `description`, `profile`, `tools`, `max_turns` и
+другие лимиты. Markdown-body становится системным prompt роли.
 
-MCP tool получает имя:
+`profile` помогает описать тип роли, но фактические полномочия задаёт список
+`tools`. Субагент не получает `delegate_task`, чтобы не запускать рекурсивную
+оркестрацию.
 
-```text
-mcp__<server>__<tool>
-```
+## Инструменты
 
-Так модель видит источник инструмента, а registry избегает конфликтов имён.
+К tools предыдущей ветки добавляются:
 
-## Безопасность MCP
+| Инструмент | Где доступен |
+| --- | --- |
+| `delegate_task` | Parent agent, если режим оркестрации разрешает делегацию. |
+| `ask_user` | Только внутри субагента, если указан в его `tools`. |
 
-- `command` и `args` запускаются списком, без shell;
-- `cwd` должен быть существующей директорией внутри workspace;
-- `MADHARNESS_MINI_*` и ключ модели не наследуются автоматически;
-- секреты передаются MCP-серверу только через явный `env`;
-- результат MCP приводится к обычному observation и обрезается по общим лимитам;
-- provider закрывается через `tools.Registry.Close()`.
+`ask_user` не читает stdin. Он завершает текущую делегацию статусом
+`needs_user_input`, а основной `run` печатает вопрос пользователю.
 
-## Остальные возможности
+## Trace
 
-Ветка сохраняет всё из предыдущих глав: `AGENTS.md`, context budget,
-`read_image`, Agent Skills, `activate_skill`, базовые файловые tools,
-`apply_patch` и `run_shell`.
+У субагента появляется отдельный дочерний trace-файл. Родительская трасса пишет
+`subagent_started`, `subagent_finished` или `subagent_failed` и ссылку на этот
+локальный trace.
 
 ## Что не входит в эту ветку
 
-Здесь ещё нет субагентов и hooks. MCP расширяет набор tools, но не добавляет
-отдельные роли, делегацию или lifecycle-политику вокруг каждого tool call.
+Здесь ещё нет hooks. Субагенты управляют ролями и делегацией, но не добавляют
+lifecycle-политику перед каждым tool call.

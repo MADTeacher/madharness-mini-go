@@ -2,11 +2,23 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
+
+type loopOptions struct {
+	StopOnUserInput bool
+}
+
+type loopResult struct {
+	Status      string
+	Result      string
+	Turns       int
+	Observation tools.Observation
+}
 
 func runModelLoop(
 	client chatClient,
@@ -14,7 +26,8 @@ func runModelLoop(
 	context *agentcontext.Manager,
 	registry *tools.Registry,
 	maxTurns int,
-) (string, error) {
+	options loopOptions,
+) (loopResult, error) {
 	for turn := 0; turn < maxTurns; turn++ {
 		toolSchemas := registry.Schemas()
 		messages, err := context.Messages(toolSchemas)
@@ -25,7 +38,7 @@ func runModelLoop(
 				"context_report": safeContextReport(context),
 			})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			return "", err
+			return loopResult{}, err
 		}
 		_ = tr.Write("model_call_started", map[string]any{
 			"turn":           turn,
@@ -36,13 +49,13 @@ func runModelLoop(
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			return "", err
+			return loopResult{}, err
 		}
 		message, err := responseMessage(raw)
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			return "", err
+			return loopResult{}, err
 		}
 		_ = tr.Write("model_call_finished", map[string]any{"turn": turn, "message": message})
 		context.RecordAssistant(message)
@@ -50,22 +63,49 @@ func runModelLoop(
 		if len(calls) == 0 {
 			result := messageContent(message)
 			_ = tr.Write("session_end", map[string]any{"result": result})
-			return result, nil
+			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
 		for _, call := range calls {
 			name, args, obs, followups, callMap := executeToolCall(registry, call)
+			subagentStop := stringObservationField(obs, "_subagent_stop")
+			if subagentStop != "" {
+				delete(obs, "_subagent_stop")
+			}
 			applyHiddenObservationEffects(context, tr, obs)
 			_ = tr.Write("tool_observation", map[string]any{
 				"tool":        name,
 				"args":        args,
 				"observation": obs,
 			})
+			if options.StopOnUserInput && subagentStop == "needs_user_input" {
+				result := "needs_user_input: " + stringObservationField(obs, "question")
+				_ = tr.Write("session_end", map[string]any{"result": result})
+				return loopResult{
+					Status:      "needs_user_input",
+					Result:      stringObservationField(obs, "question"),
+					Turns:       turn + 1,
+					Observation: obs,
+				}, nil
+			}
 			context.RecordToolResult(callMap, obs, followups)
+			if isParentUserInputRequest(obs) {
+				result := renderUserInputRequest(obs)
+				_ = tr.Write("user_input_requested", map[string]any{
+					"subagent":            stringObservationField(obs, "subagent"),
+					"question":            stringObservationField(obs, "question"),
+					"options":             obs["options"],
+					"reason":              stringObservationField(obs, "reason"),
+					"subagent_trace_id":   stringObservationField(obs, "subagent_trace_id"),
+					"subagent_trace_path": stringObservationField(obs, "subagent_trace_path"),
+				})
+				_ = tr.Write("session_end", map[string]any{"result": result})
+				return loopResult{Status: "needs_user_input", Result: result, Turns: turn + 1, Observation: obs}, nil
+			}
 		}
 	}
 	result := "Agent stopped: max_turns exceeded."
 	_ = tr.Write("session_end", map[string]any{"result": result})
-	return result, nil
+	return loopResult{Status: "max_turns", Result: result, Turns: maxTurns}, nil
 }
 
 func toolCalls(message map[string]any) []any {
@@ -135,4 +175,52 @@ func safeContextReport(context *agentcontext.Manager) (report map[string]any) {
 		return map[string]any{"error": "context is nil"}
 	}
 	return context.Report()
+}
+
+func isParentUserInputRequest(observation tools.Observation) bool {
+	return stringObservationField(observation, "tool") == "delegate_task" &&
+		stringObservationField(observation, "status") == "needs_user_input" &&
+		strings.TrimSpace(stringObservationField(observation, "question")) != ""
+}
+
+func renderUserInputRequest(observation tools.Observation) string {
+	subagent := strings.TrimSpace(stringObservationField(observation, "subagent"))
+	if subagent == "" {
+		subagent = "subagent"
+	}
+	question := strings.TrimSpace(stringObservationField(observation, "question"))
+	reason := strings.TrimSpace(stringObservationField(observation, "reason"))
+	lines := []string{subagent + " просит уточнение:", "", question}
+	options := observationOptions(observation["options"])
+	if len(options) > 0 {
+		lines = append(lines, "", "Варианты:")
+		for index, option := range options {
+			lines = append(lines, fmt.Sprintf("%d. %s", index+1, option))
+		}
+	}
+	if reason != "" {
+		lines = append(lines, "", "Причина: "+reason)
+	}
+	lines = append(lines, "", "Ответьте на вопрос и повторите команду `run` с выбранным решением в задаче.")
+	return strings.Join(lines, "\n")
+}
+
+func stringObservationField(observation tools.Observation, key string) string {
+	if value, ok := observation[key].(string); ok {
+		return value
+	}
+	return ""
+}
+
+func observationOptions(raw any) []string {
+	out := []string{}
+	switch items := raw.(type) {
+	case []string:
+		out = append(out, items...)
+	case []any:
+		for _, item := range items {
+			out = append(out, fmt.Sprint(item))
+		}
+	}
+	return out
 }

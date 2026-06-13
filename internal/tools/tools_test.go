@@ -1,6 +1,11 @@
 package tools
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/MADTeacher/madharness-mini-go/internal/config"
+)
 
 func TestObservationFormat(t *testing.T) {
 	if OK("x", "done", nil)["ok"] != true {
@@ -27,4 +32,56 @@ func TestIgnoredDetectsHiddenDirsInAbsolutePath(t *testing.T) {
 	if !Ignored("/tmp/project/.git/config") {
 		t.Fatal(".git path should be ignored")
 	}
+}
+
+func TestRegistryFiltersAllowedTools(t *testing.T) {
+	cfg := testToolsConfig(t)
+	registry, err := NewRegistryWithOptions(cfg, RegistryOptions{AllowedTools: []string{"visible"}}, fakeProvider{
+		specs: []Spec{
+			{Name: "visible", Parameters: Obj(nil, nil), Handler: func(*Context, map[string]any) Observation { return OK("visible", "ok", nil) }},
+			{Name: "hidden", Parameters: Obj(nil, nil), Handler: func(*Context, map[string]any) Observation { return OK("hidden", "ok", nil) }},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(registry.Tools(), ",") != "visible" {
+		t.Fatalf("tools = %v", registry.Tools())
+	}
+	if obs := registry.Call("hidden", nil); obs["ok"] != false {
+		t.Fatalf("hidden call = %+v", obs)
+	}
+}
+
+func TestContextWritePathScope(t *testing.T) {
+	ctx := &Context{WritableSuffixes: []string{".md"}, WriteScopeDescription: "only markdown"}
+	if err := ctx.WritePathError("PLAN.md"); err != "" {
+		t.Fatalf("PLAN.md denied: %s", err)
+	}
+	if err := ctx.WritePathError("index.html"); !strings.Contains(err, "only markdown") {
+		t.Fatalf("index.html error = %q", err)
+	}
+}
+
+type fakeProvider struct {
+	specs []Spec
+}
+
+func (p fakeProvider) Specs(ctx *Context) ([]Spec, error) {
+	_ = ctx
+	return p.specs, nil
+}
+
+func testToolsConfig(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("MADHARNESS_MINI_MODEL", "")
+	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
+	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
+	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }

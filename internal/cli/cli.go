@@ -16,7 +16,7 @@ import (
 // Main запускает CLI и возвращает process exit code.
 func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
 	if len(argv) == 0 {
-		fmt.Fprintln(stderr, "usage: madharness-mini <init|ask|run|trace|skills> ...")
+		fmt.Fprintln(stderr, "usage: madharness-mini <init|ask|run|trace|skills|subagents> ...")
 		return 2
 	}
 	cfg, err := config.New("")
@@ -35,6 +35,8 @@ func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
 		return runTrace(argv[1:], cfg, stdout, stderr)
 	case "skills":
 		return runSkills(argv[1:], cfg, stdout, stderr)
+	case "subagents":
+		return runSubagents(argv[1:], cfg, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, "error: unknown command:", argv[0])
 		return 2
@@ -82,11 +84,25 @@ func runAsk(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Write
 }
 
 func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {
-	task, ok := oneTask(argv, stderr)
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	orchestration := fs.String("orchestration", "", "orchestration mode: off, requested, auto, required")
+	noOrchestrate := fs.Bool("no-orchestrate", false, "do not show delegate_task to the parent agent")
+	orchestrate := fs.Bool("orchestrate", false, "make delegate_task available to the parent agent")
+	orchestrateRequired := fs.Bool("orchestrate-required", false, "strict mode: parent coordinates work through subagents")
+	if err := fs.Parse(argv); err != nil {
+		return 2
+	}
+	mode, err := selectedOrchestrationMode(*orchestration, *noOrchestrate, *orchestrate, *orchestrateRequired)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 2
+	}
+	task, ok := oneTask(fs.Args(), stderr)
 	if !ok {
 		return 2
 	}
-	result, tracePath, err := agent.Run(task, cfg)
+	result, tracePath, err := agent.RunWithOptions(task, cfg, agent.RunOptions{OrchestrationMode: mode})
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1
@@ -116,6 +132,20 @@ func runSkills(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Wr
 		return 2
 	}
 	result, err := SkillsCommand(cfg, argv[0], argv[1:]...)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, result)
+	return 0
+}
+
+func runSubagents(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {
+	if len(argv) < 1 {
+		fmt.Fprintln(stderr, "usage: madharness-mini subagents <list|show|validate> [name]")
+		return 2
+	}
+	result, err := SubagentsCommand(cfg, argv[0], argv[1:]...)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1

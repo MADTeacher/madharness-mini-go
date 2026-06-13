@@ -13,6 +13,13 @@ import (
 
 // Summarize строит короткую CLI-сводку по trace id или его префиксу.
 func Summarize(cfg *config.Config, traceID string) (string, error) {
+	normalized := strings.TrimSuffix(traceID, ".jsonl")
+	exact := filepath.Join(cfg.StateDir, "traces", normalized+".jsonl")
+	if _, err := os.Stat(exact); err == nil {
+		return summarizePath(exact)
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
 	pattern := filepath.Join(cfg.StateDir, "traces", traceID+"*.jsonl")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -21,7 +28,10 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	if len(matches) == 0 {
 		return "", fmt.Errorf("trace not found: %s", traceID)
 	}
-	path := matches[0]
+	return summarizePath(matches[0])
+}
+
+func summarizePath(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -39,6 +49,8 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	mcpStarted := map[string]int{}
 	mcpStopped := 0
 	mcpErrors := 0
+	subagentEvents := 0
+	subagentNames := map[string]bool{}
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -66,6 +78,13 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 		}
 		if event["event"] == "mcp_server_error" {
 			mcpErrors++
+		}
+		if name, ok := event["event"].(string); ok && strings.HasPrefix(name, "subagent_") {
+			subagentEvents++
+			subagentName := fmt.Sprint(event["name"])
+			if subagentName != "" && subagentName != "<nil>" {
+				subagentNames[subagentName] = true
+			}
 		}
 		if report, ok := event["context_report"].(map[string]any); ok {
 			contextReport = report
@@ -115,6 +134,18 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 			mcpStopped,
 			mcpErrors,
 		))
+	}
+	if subagentEvents > 0 {
+		names := make([]string, 0, len(subagentNames))
+		for name := range subagentNames {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		namesText := "none"
+		if len(names) > 0 {
+			namesText = strings.Join(names, ", ")
+		}
+		lines = append(lines, fmt.Sprintf("subagents: events %d; names %s", subagentEvents, namesText))
 	}
 	lines = append(lines, fmt.Sprintf("result: %s", result))
 	return strings.Join(lines, "\n"), nil

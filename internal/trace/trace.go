@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
@@ -34,12 +35,49 @@ func New(cfg *config.Config, kind string) (*Trace, error) {
 	return tr, nil
 }
 
+// Child создаёт trace дочернего запуска рядом с parent trace.
+func (t *Trace) Child(kind string, label string) (*Trace, error) {
+	id := t.ID + "--" + safeTraceLabel(label) + "-" + randomSuffix()
+	tr := &Trace{
+		ID:   id,
+		Path: filepath.Join(filepath.Dir(t.Path), id+".jsonl"),
+	}
+	if err := tr.Write("session_start", map[string]any{
+		"kind":      kind,
+		"parent_id": t.ID,
+		"label":     label,
+	}); err != nil {
+		return nil, err
+	}
+	return tr, nil
+}
+
 func randomSuffix() string {
 	buf := make([]byte, 4)
 	if _, err := rand.Read(buf); err != nil {
 		return "00000000"
 	}
 	return hex.EncodeToString(buf)
+}
+
+func safeTraceLabel(value string) string {
+	var builder strings.Builder
+	for _, ch := range value {
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_' {
+			builder.WriteRune(ch)
+		} else {
+			builder.WriteRune('-')
+		}
+	}
+	parts := strings.FieldsFunc(builder.String(), func(ch rune) bool { return ch == '-' })
+	cleaned := strings.Join(parts, "-")
+	if cleaned == "" {
+		return "child"
+	}
+	if len(cleaned) > 80 {
+		return cleaned[:80]
+	}
+	return cleaned
 }
 
 // Write дописывает одно событие в JSONL.

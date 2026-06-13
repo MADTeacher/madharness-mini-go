@@ -10,6 +10,15 @@ import (
 
 // BaseContext готовит стартовый контекст ask/run: system prompt, AGENTS.md и задачу.
 func BaseContext(cfg *config.Config, task string, providers ...Provider) (*Manager, error) {
+	return BaseContextWithOptions(cfg, task, Options{
+		MaxTokens:       cfg.Data.ContextMaxTokens,
+		KeepRecentTurns: cfg.Data.ContextKeepRecentTurns,
+		Providers:       providers,
+	})
+}
+
+// BaseContextWithOptions готовит стартовый контекст с явным бюджетом.
+func BaseContextWithOptions(cfg *config.Config, task string, options Options) (*Manager, error) {
 	system, err := prompt.Load("system")
 	if err != nil {
 		return nil, err
@@ -18,11 +27,7 @@ func BaseContext(cfg *config.Config, task string, providers ...Provider) (*Manag
 	if err != nil {
 		return nil, err
 	}
-	context := NewManager(task, Options{
-		MaxTokens:       cfg.Data.ContextMaxTokens,
-		KeepRecentTurns: cfg.Data.ContextKeepRecentTurns,
-		Providers:       providers,
-	})
+	context := NewManager(task, options)
 	context.AddFragment(Fragment{
 		ID:        "system",
 		Source:    "internal/prompt/prompts/system.md",

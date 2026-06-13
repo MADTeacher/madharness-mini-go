@@ -18,8 +18,11 @@ type Registry struct {
 
 // RegistryOptions передаёт handlers наблюдаемость текущего run.
 type RegistryOptions struct {
-	Trace           TraceWriter
-	ResourceTracker ResourceTracker
+	Trace                 TraceWriter
+	ResourceTracker       ResourceTracker
+	AllowedTools          []string
+	WritableSuffixes      []string
+	WriteScopeDescription string
 }
 
 // NewRegistry собирает tools от providers и проверяет дубликаты имён.
@@ -30,16 +33,19 @@ func NewRegistry(cfg *config.Config, providers ...Provider) (*Registry, error) {
 // NewRegistryWithOptions собирает registry с trace и skill runtime для handlers.
 func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, providers ...Provider) (*Registry, error) {
 	ctx := &Context{
-		Config:          cfg,
-		Policy:          policy.New(cfg),
-		Trace:           options.Trace,
-		ResourceTracker: options.ResourceTracker,
+		Config:                cfg,
+		Policy:                policy.New(cfg),
+		Trace:                 options.Trace,
+		ResourceTracker:       options.ResourceTracker,
+		WritableSuffixes:      normalizeSuffixes(options.WritableSuffixes),
+		WriteScopeDescription: options.WriteScopeDescription,
 	}
 	registry := &Registry{
 		ctx:       ctx,
 		tools:     map[string]Spec{},
 		providers: append([]Provider{}, providers...),
 	}
+	allowed := allowedSet(options.AllowedTools)
 	for _, provider := range registry.providers {
 		specs, err := provider.Specs(ctx)
 		if err != nil {
@@ -47,6 +53,9 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 			return nil, err
 		}
 		for _, tool := range specs {
+			if allowed != nil && !allowed[tool.Name] {
+				continue
+			}
 			if _, exists := registry.tools[tool.Name]; exists {
 				registry.Close()
 				return nil, fmt.Errorf("duplicate tool name: %s", tool.Name)
@@ -56,6 +65,36 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 		}
 	}
 	return registry, nil
+}
+
+func allowedSet(names []string) map[string]bool {
+	if names == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, name := range names {
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func normalizeSuffixes(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	out := []string{}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Close освобождает ресурсы provider-ов, которые живут дольше одного вызова tool.

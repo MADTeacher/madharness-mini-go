@@ -9,26 +9,59 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/mcp"
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
 	"github.com/MADTeacher/madharness-mini-go/internal/skills"
+	"github.com/MADTeacher/madharness-mini-go/internal/subagents"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/builtin"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
+// RunOptions задаёт режимы одного запуска run.
+type RunOptions struct {
+	OrchestrationMode string
+}
+
 // Run запускает агентский цикл до финального ответа или max_turns.
 func Run(task string, cfg *config.Config) (string, string, error) {
-	return runWithClient(task, cfg, model.New(cfg))
+	return RunWithOptions(task, cfg, RunOptions{})
+}
+
+// RunWithOptions запускает agent loop с CLI-переопределениями одного запуска.
+func RunWithOptions(task string, cfg *config.Config, options RunOptions) (string, string, error) {
+	return runWithClientOptions(task, cfg, model.New(cfg), options)
 }
 
 func runWithClient(task string, cfg *config.Config, client chatClient) (string, string, error) {
+	return runWithClientOptions(task, cfg, client, RunOptions{})
+}
+
+func runWithClientOptions(task string, cfg *config.Config, client chatClient, options RunOptions) (string, string, error) {
 	tr, err := trace.New(cfg, "run")
 	if err != nil {
 		return "", "", err
 	}
 	index := skills.Discover(cfg)
+	subagentIndex := subagents.Discover(cfg)
+	orchestration, err := subagents.ResolveOrchestrationMode(cfg, task, options.OrchestrationMode)
+	if err != nil {
+		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		return "", tr.Path, err
+	}
+	_ = tr.Write("orchestration_mode", map[string]any{
+		"configured":        orchestration.Configured,
+		"effective":         orchestration.Effective,
+		"source":            orchestration.Source,
+		"requested_by_task": orchestration.RequestedByTask,
+		"legacy_enabled":    cfg.Data.OrchestrationEnabled,
+	})
 	_ = tr.Write("skills_discovered", map[string]any{
 		"count":       len(index.Skills),
 		"names":       index.Names(),
 		"diagnostics": diagnosticsForTrace(index.Diagnostics, cfg.Root),
+	})
+	_ = tr.Write("subagents_discovered", map[string]any{
+		"count":       len(subagentIndex.Subagents),
+		"names":       subagentIndex.Names(),
+		"diagnostics": subagentDiagnosticsForTrace(subagentIndex.Diagnostics),
 	})
 	selection := skills.FindExplicitSelection(task, index.NameSet())
 	if selection.Present() {
@@ -52,10 +85,21 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 		contextProviders = append(contextProviders, skills.CatalogProvider{Index: index, WorkspaceRoot: cfg.Root})
 		toolProviders = append(toolProviders, skills.ToolProvider{Runtime: runtime})
 	}
-	toolProviders = append(toolProviders, &mcp.ToolProvider{})
+	if orchestration.Effective != "off" {
+		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
+			Index: subagentIndex,
+			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
+				return runSubagent(cfg, client, tr, subagent, args)
+			},
+		})
+	}
+	if orchestration.Effective != "required" {
+		toolProviders = append(toolProviders, &mcp.ToolProvider{})
+	}
 	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
 		Trace:           tr,
 		ResourceTracker: runtime,
+		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {
 		return "", tr.Path, err
@@ -64,6 +108,9 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 	context, err := BaseContext(cfg, task, contextProviders...)
 	if err != nil {
 		return "", tr.Path, err
+	}
+	if orchestration.Effective == "required" {
+		context.AddFragment(subagents.RequiredFragment())
 	}
 	for _, name := range selection.Names {
 		obs := runtime.Activate(name, "explicit")
@@ -74,14 +121,22 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 		}
 		applyHiddenObservationEffects(context, tr, obs)
 	}
-	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns)
-	return result, tr.Path, err
+	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{})
+	return result.Result, tr.Path, err
 }
 
 func diagnosticsForTrace(diagnostics []skills.Diagnostic, root string) []map[string]string {
 	out := make([]map[string]string, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		out = append(out, diagnostic.AsMap(root))
+	}
+	return out
+}
+
+func subagentDiagnosticsForTrace(diagnostics []subagents.Diagnostic) []map[string]string {
+	out := make([]map[string]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		out = append(out, diagnostic.AsMap())
 	}
 	return out
 }
