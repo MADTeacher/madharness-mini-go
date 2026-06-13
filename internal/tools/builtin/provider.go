@@ -14,7 +14,7 @@ import (
 type Provider struct{}
 
 // Specs возвращает инструменты, доступные run-agent в минимальной ветке.
-func (Provider) Specs(ctx *tools.Context) []tools.Spec {
+func (Provider) Specs(ctx *tools.Context) ([]tools.Spec, error) {
 	_ = ctx
 	specs := []tools.Spec{}
 	files := filetools.Specs()
@@ -24,5 +24,5 @@ func (Provider) Specs(ctx *tools.Context) []tools.Spec {
 	specs = append(specs, patchtool.Spec())
 	specs = append(specs, searchtool.Spec())
 	specs = append(specs, shelltool.Spec())
-	return specs
+	return specs, nil
 }

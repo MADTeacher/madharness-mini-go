@@ -9,9 +9,10 @@
 | `internal/config` | Загружает настройки из defaults, локального конфига, `.env` и окружения. |
 | `internal/agentcontext` | Собирает prompt fragments, задачу пользователя, историю и бюджет контекста. |
 | `internal/skills` | Ищет skills, строит catalog, активирует `SKILL.md` и описывает resources. |
-| `internal/agent` | Собирает запуск: trace, model client, skills discovery, context и registry. |
+| `internal/mcp` | Реализует stdio MCP client, JSON-RPC, config loader, provider и result adapter. |
+| `internal/agent` | Собирает запуск: trace, model client, skills discovery, MCP providers, context и registry. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
-| `internal/tools` | Описывает встроенные инструменты и provider `activate_skill`. |
+| `internal/tools` | Описывает встроенные инструменты и общий `Registry`. |
 | `internal/policy` | Проверяет workspace-границы, защищённые пути и shell-команды. |
 | `internal/prompt` | Загружает встроенный системный prompt через `embed`. |
 | `internal/instructions` | Загружает корневой `AGENTS.md` с лимитом размера. |
@@ -21,27 +22,25 @@
 
 1. `internal/cli` создаёт `config.Config`.
 2. `agent.Run()` создаёт `Trace`, `model.Client` и запускает discovery skills.
-3. Если пользователь явно указал skill, он активируется до первого model call.
-4. Если явного выбора нет, в контекст добавляется compact catalog, а в registry
-   появляется tool `activate_skill`.
-5. `agentcontext.BaseContext()` добавляет встроенный prompt и корневой
+3. Skill catalog или явно выбранный skill добавляется в context.
+4. `agentcontext.BaseContext()` добавляет встроенный prompt и корневой
    `AGENTS.md`.
-6. `tools.Registry` регистрирует встроенные инструменты и skill provider.
-7. `agentcontext.Manager.Messages()` применяет бюджет и отдаёт messages.
+5. `tools.Registry` получает встроенные tools, `activate_skill` и MCP tools из
+   `.madharness-mini/mcp.json`, если файл есть.
+6. MCP provider запускает включённые stdio servers, вызывает `initialize` и
+   `tools/list`, затем создаёт `tools.Spec` для каждого внешнего tool.
+7. `agentcontext.Manager.Messages()` применяет бюджет.
 8. Общий model/tool loop отправляет messages и tool schemas в модель.
-9. Tool observation записывается в историю; служебный эффект активации skill
-   добавляет durable fragment отдельно от observation.
-10. Цикл продолжается до финального ответа или лимита `max_turns`.
+9. При MCP tool call provider отправляет `tools/call` внешнему серверу и
+   превращает ответ в обычное observation.
+10. `tools.Registry.Close()` закрывает MCP-процессы через `defer`.
 
-## Границы skills
+## Границы MCP
 
-Skill не является плагином кода и не запускается сам. Он добавляет инструкции и
-указывает на ресурсы внутри workspace. Если skill просит прочитать reference или
-запустить script, модель всё равно должна использовать обычные инструменты:
-`read_file` или `run_shell`.
-
-Это делает skills хорошей учебной ступенью: студент видит, как расширяется
-контекст, не смешивая это с внешними процессами или новыми протоколами.
+MCP-сервер — доверенный локальный процесс, но harness всё равно задаёт явные
+границы: запуск без shell, workspace-relative `cwd`, безопасное окружение и
+обычный формат observation. Это учебно важно: внешний tool не должен ломать
+модельный протокол и не должен незаметно получать секреты API.
 
 ## Данные и безопасность
 
@@ -49,13 +48,14 @@ Skill не является плагином кода и не запускает
 `Policy.SafePath()`, поэтому относительные пути не выходят за рабочую папку, а
 защищённые пути из `protected_paths` блокируются.
 
-Discovery skills использует отдельный `Policy.SkillRoot()`: skill-каталоги
-должны оставаться внутри workspace, но не проходят через `protected_paths`,
-потому что это фиксированные служебные roots, а не произвольный пользовательский
-путь.
+MCP `cwd` тоже проходит через `Policy.SafePath()`. Переменные окружения
+`MADHARNESS_MINI_*` не наследуются внешними MCP-процессами автоматически:
+сервер получает только безопасный минимум системного окружения и явный `env` из
+`mcp.json`.
 
 ## Тестовое покрытие
 
-Основные сценарии лежат в `internal/skills/*_test.go` и соседних пакетах:
-discovery, frontmatter, explicit selection, compact catalog, activation,
-resources, контекст, инструменты, CLI и trace.
+Основные сценарии MCP лежат в `internal/mcp/mcp_test.go`: config, stdio
+protocol, provider, result conversion, безопасное окружение и закрытие
+процессов. Остальные тесты продолжают проверять config, context, skills,
+policy, tools, agent loop и trace.

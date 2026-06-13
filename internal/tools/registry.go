@@ -9,9 +9,11 @@ import (
 
 // Registry хранит инструменты в стабильном порядке и вызывает handlers по имени.
 type Registry struct {
-	ctx   *Context
-	order []string
-	tools map[string]Spec
+	ctx       *Context
+	order     []string
+	tools     map[string]Spec
+	providers []Provider
+	closed    bool
 }
 
 // RegistryOptions передаёт handlers наблюдаемость текущего run.
@@ -33,10 +35,20 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 		Trace:           options.Trace,
 		ResourceTracker: options.ResourceTracker,
 	}
-	registry := &Registry{ctx: ctx, tools: map[string]Spec{}}
-	for _, provider := range providers {
-		for _, tool := range provider.Specs(ctx) {
+	registry := &Registry{
+		ctx:       ctx,
+		tools:     map[string]Spec{},
+		providers: append([]Provider{}, providers...),
+	}
+	for _, provider := range registry.providers {
+		specs, err := provider.Specs(ctx)
+		if err != nil {
+			registry.Close()
+			return nil, err
+		}
+		for _, tool := range specs {
 			if _, exists := registry.tools[tool.Name]; exists {
+				registry.Close()
 				return nil, fmt.Errorf("duplicate tool name: %s", tool.Name)
 			}
 			registry.order = append(registry.order, tool.Name)
@@ -44,6 +56,21 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 		}
 	}
 	return registry, nil
+}
+
+// Close освобождает ресурсы provider-ов, которые живут дольше одного вызова tool.
+func (r *Registry) Close() {
+	if r == nil || r.closed {
+		return
+	}
+	r.closed = true
+	for _, provider := range r.providers {
+		closer, ok := provider.(CloseProvider)
+		if !ok {
+			continue
+		}
+		closer.Close(r.ctx.Trace)
+	}
 }
 
 // Schemas возвращает описание tools для model call.

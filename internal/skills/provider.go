@@ -33,13 +33,13 @@ type ToolProvider struct {
 }
 
 // Specs регистрирует activate_skill только при наличии валидных skills.
-func (p ToolProvider) Specs(*tools.Context) []tools.Spec {
+func (p ToolProvider) Specs(*tools.Context) ([]tools.Spec, error) {
 	if p.Runtime == nil {
-		return nil
+		return nil, nil
 	}
 	names := p.Runtime.Index().Names()
 	if len(names) == 0 {
-		return nil
+		return nil, nil
 	}
 	return []tools.Spec{{
 		Name:        "activate_skill",
@@ -55,5 +55,5 @@ func (p ToolProvider) Specs(*tools.Context) []tools.Spec {
 			_ = ctx
 			return p.Runtime.Activate(tools.StringArg(args, "name", ""), "tool")
 		},
-	}}
+	}}, nil
 }

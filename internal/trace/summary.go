@@ -36,6 +36,9 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	var discovered map[string]any
 	activated := map[string]bool{}
 	resourcesUsed := 0
+	mcpStarted := map[string]int{}
+	mcpStopped := 0
+	mcpErrors := 0
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -54,6 +57,15 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 		}
 		if event["event"] == "skill_resource_used" {
 			resourcesUsed++
+		}
+		if event["event"] == "mcp_server_started" {
+			mcpStarted[fmt.Sprint(event["server"])] = intFromAny(event["tools_count"])
+		}
+		if event["event"] == "mcp_server_stopped" {
+			mcpStopped++
+		}
+		if event["event"] == "mcp_server_error" {
+			mcpErrors++
 		}
 		if report, ok := event["context_report"].(map[string]any); ok {
 			contextReport = report
@@ -85,6 +97,23 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 			intFromAny(discovered["count"]),
 			activatedText,
 			resourcesUsed,
+		))
+	}
+	if len(mcpStarted) > 0 || mcpStopped > 0 || mcpErrors > 0 {
+		servers := make([]string, 0, len(mcpStarted))
+		for server, count := range mcpStarted {
+			servers = append(servers, fmt.Sprintf("%s(%d tools)", server, count))
+		}
+		sort.Strings(servers)
+		startedText := "none"
+		if len(servers) > 0 {
+			startedText = strings.Join(servers, ", ")
+		}
+		lines = append(lines, fmt.Sprintf(
+			"mcp: started %s; stopped %d; errors %d",
+			startedText,
+			mcpStopped,
+			mcpErrors,
 		))
 	}
 	lines = append(lines, fmt.Sprintf("result: %s", result))

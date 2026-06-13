@@ -6,6 +6,7 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/mcp"
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
 	"github.com/MADTeacher/madharness-mini-go/internal/skills"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
@@ -51,6 +52,7 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 		contextProviders = append(contextProviders, skills.CatalogProvider{Index: index, WorkspaceRoot: cfg.Root})
 		toolProviders = append(toolProviders, skills.ToolProvider{Runtime: runtime})
 	}
+	toolProviders = append(toolProviders, &mcp.ToolProvider{})
 	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
 		Trace:           tr,
 		ResourceTracker: runtime,
@@ -58,6 +60,7 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 	if err != nil {
 		return "", tr.Path, err
 	}
+	defer registry.Close()
 	context, err := BaseContext(cfg, task, contextProviders...)
 	if err != nil {
 		return "", tr.Path, err

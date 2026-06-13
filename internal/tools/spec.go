@@ -5,7 +5,12 @@ type Handler func(*Context, map[string]any) Observation
 
 // Provider отдаёт набор инструментов для registry.
 type Provider interface {
-	Specs(*Context) []Spec
+	Specs(*Context) ([]Spec, error)
+}
+
+// CloseProvider освобождает ресурсы provider-а после agent run.
+type CloseProvider interface {
+	Close(TraceWriter)
 }
 
 // Spec описывает один tool: имя, описание, JSON Schema и handler.

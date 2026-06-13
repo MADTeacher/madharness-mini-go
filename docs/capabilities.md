@@ -1,72 +1,57 @@
 # Возможности ветки
 
-`04-Agents-Skills` добавляет к context layer project-local skills. Skill — это
-папка с `SKILL.md`, который описывает workflow и ресурсы для конкретного типа
-задач.
+`05-mcp` добавляет внешние tools через минимальный stdio MCP client. Для модели
+MCP-инструмент выглядит как обычный tool, а для harness это отдельный provider,
+который управляет процессом и JSON-RPC.
 
 ## Команды CLI
 
 | Команда | Что делает |
 | --- | --- |
 | `madharness-mini init` | Создаёт или обновляет `.madharness-mini/config.json`. |
-| `madharness-mini ask "..."` | Отправляет один запрос модели без tools и без skills catalog. |
-| `madharness-mini run "..."` | Запускает agent loop с инструментами, контекстом и skills. |
+| `madharness-mini ask "..."` | Отправляет один запрос модели без tools, skills catalog и MCP. |
+| `madharness-mini run "..."` | Запускает agent loop с базовыми tools, skills и MCP. |
 | `madharness-mini trace <id>` | Показывает краткую сводку JSONL-трассы. |
-| `madharness-mini skills list` | Показывает найденные project-local skills. |
-| `madharness-mini skills show <name>` | Показывает metadata, ресурсы и текст одного skill. |
-| `madharness-mini skills validate` | Печатает диагностику `SKILL.md`. |
+| `madharness-mini skills list/show/validate` | Диагностирует project-local Agent Skills. |
 
 При локальной разработке команда запускается как `go run ./cmd/madharness-mini`.
 
-## Где лежат skills
+## MCP tools
 
-Discovery смотрит прямые подпапки:
+Настройки MCP лежат отдельно:
 
 ```text
-.madharness_mini/skills
-.agents/skills
+.madharness-mini/mcp.json
 ```
 
-В каждой папке skill должен иметь `SKILL.md`. Обязательные поля frontmatter:
-`name` и `description`. Поддерживаются optional-поля `license`,
-`compatibility`, `metadata` и experimental `allowed-tools`.
+Если файла нет, MCP выключен. Harness запускает только серверы с
+`enabled: true`. Поддерживается stdio transport и tools API: `initialize`,
+`tools/list`, `tools/call`.
 
-## Как skill попадает в контекст
+MCP tool получает имя:
 
-Есть два пути:
+```text
+mcp__<server>__<tool>
+```
 
-- пользователь явно выбирает skill через `@skill:name`, `@skill/name`, `$name`
-  или фразу вида `используй навык name`;
-- модель видит compact catalog и вызывает `activate_skill`.
+Так модель видит источник инструмента, а registry избегает конфликтов имён.
 
-После активации тело `SKILL.md` становится durable `agentcontext.Fragment`: оно
-сохраняется при обрезке обычной истории и влияет на следующие model calls.
+## Безопасность MCP
 
-## Инструменты режима `run`
+- `command` и `args` запускаются списком, без shell;
+- `cwd` должен быть существующей директорией внутри workspace;
+- `MADHARNESS_MINI_*` и ключ модели не наследуются автоматически;
+- секреты передаются MCP-серверу только через явный `env`;
+- результат MCP приводится к обычному observation и обрезается по общим лимитам;
+- provider закрывается через `tools.Registry.Close()`.
 
-К инструментам предыдущей ветки добавляется `activate_skill`. Он появляется
-только в `run`, когда найдены skills и пользователь не выбрал skill явно.
+## Остальные возможности
 
-Базовые инструменты остаются прежними: `list_files`, `read_file`, `read_image`,
-`search_code`, `apply_patch`, `write_file`, `run_shell`. У `run_shell`
-появился необязательный `cwd`, чтобы запускать documented skill scripts из
-каталога навыка, не обходя общую shell policy.
-
-## Trace
-
-Для skills важны события:
-
-- `skills_discovered`;
-- `skills_explicit_selection`;
-- `skills_auto_selection_disabled`;
-- `skill_activated`;
-- `skill_resource_used`.
-
-Trace не дублирует полный текст `SKILL.md`. Это сохраняет журнал компактным и
-не раскрывает лишний контент.
+Ветка сохраняет всё из предыдущих глав: `AGENTS.md`, context budget,
+`read_image`, Agent Skills, `activate_skill`, базовые файловые tools,
+`apply_patch` и `run_shell`.
 
 ## Что не входит в эту ветку
 
-Ветка не содержит MCP, субагентов и hooks. Skills не дают особых прав: чтение
-ресурсов и запуск scripts всё равно идут через обычные инструменты и общую
-политику workspace.
+Здесь ещё нет субагентов и hooks. MCP расширяет набор tools, но не добавляет
+отдельные роли, делегацию или lifecycle-политику вокруг каждого tool call.

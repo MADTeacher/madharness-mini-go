@@ -1,22 +1,22 @@
 # madharness-mini-go
 
-> Учебная ветка: `04-Agents-Skills`
+> Учебная ветка: `05-mcp`
 >
-> Тема главы: project-local Agent Skills как управляемый способ добавлять
-> агенту workflow-инструкции и ресурсы.
+> Тема главы: подключение внешних инструментов через минимальный stdio MCP
+> client без runtime-зависимостей.
 >
-> В этой точке Go harness умеет искать `SKILL.md`, показывать каталог навыков
-> модели, активировать skill через `activate_skill` и добавлять инструкции
-> навыка в durable context.
+> В этой точке Go harness умеет читать `.madharness-mini/mcp.json`, запускать
+> явно включённые MCP-серверы, получать `tools/list` и отдавать модели MCP tools
+> как обычные `tools.Spec` с префиксом `mcp__server__tool`.
 >
 > Лабораторные работы: [LABS.md](LABS.md)
-> Предыдущая ветка: `03-Context-Layer`
-> Следующая ветка: `05-mcp`
+> Предыдущая ветка: `04-Agents-Skills`
+> Следующая ветка: `06-subagents`
 
 `madharness-mini-go` — учебный минималистичный harness для работы кодирующего
-ИИ-агента с локальным программным продуктом. Он даёт модели понятный цикл:
-получить задачу, увидеть контекст проекта, выбрать подходящий skill, вызвать
-инструменты и записать ход выполнения в trace.
+ИИ-агента с локальным программным продуктом. Он показывает, как локальный
+agent loop можно расширить внешними инструментами, не превращая учебный проект
+в тяжёлый SDK.
 
 Проект написан для Go 1.25 и использует только стандартную библиотеку. Внутри
 используется OpenAI-совместимый API `/chat/completions`, поэтому можно
@@ -28,16 +28,17 @@
 - команды `init`, `ask`, `run`, `trace` и `skills`;
 - проектные инструкции `AGENTS.md`;
 - слой контекста с бюджетом и `context_report`;
+- project-local Agent Skills и `activate_skill`;
 - инструмент `read_image` для моделей с vision input;
 - базовые инструменты workspace: `list_files`, `read_file`, `write_file`,
   `search_code`, `apply_patch`, `run_shell`;
-- discovery project-local skills в `.madharness_mini/skills` и `.agents/skills`;
-- явная активация через `@skill:name`, `@skill/name`, `$name` и похожие фразы;
-- auto-activation через catalog и инструмент `activate_skill`;
-- CLI-диагностика `skills list`, `skills show`, `skills validate`.
+- пакет `internal/mcp` со stdio transport, JSON-RPC, provider-ом tools и
+  адаптером результатов;
+- отдельный файл `.madharness-mini/mcp.json` для MCP-серверов;
+- нормализация MCP `tools/call` в обычное observation harness.
 
-В этой ветке ещё нет MCP, субагентов и hooks. Здесь фокус только на skills как
-локальном расширении контекста и workflow-памяти агента.
+В этой ветке ещё нет субагентов и hooks. MCP здесь изучается как отдельный
+источник инструментов, а не как система оркестрации ролей.
 
 ## Быстрый запуск
 
@@ -62,34 +63,36 @@ go run ./cmd/madharness-mini init \
 go run ./cmd/madharness-mini init --no-prompt
 ```
 
-## Минимальный skill
+## Подключение MCP-сервера
 
-Создайте файл `.madharness_mini/skills/docs-writer/SKILL.md`:
+Создайте `.madharness-mini/mcp.json`:
 
-```md
----
-name: docs-writer
-description: Помогает обновлять README и учебную документацию проекта.
----
-
-Перед правкой документации прочитай README, docs/README.md и связанные файлы.
-Сохраняй короткий учебный стиль и не добавляй возможности, которых нет в коде.
+```json
+{
+  "servers": {
+    "playwright": {
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "cwd": ".",
+      "timeout_seconds": 30
+    }
+  }
+}
 ```
 
-Проверьте, что harness видит skill:
+Если файла нет, MCP выключен. Harness запускает только явно включённые серверы.
+Команда и аргументы передаются в subprocess списком, без shell-строки.
 
-```bash
-go run ./cmd/madharness-mini skills list
+После `initialize` harness вызывает `tools/list`. Например MCP tool
+`browser_navigate` сервера `playwright` станет tool name:
+
+```text
+mcp__playwright__browser_navigate
 ```
 
-Запустите задачу с явным skill:
-
-```bash
-go run ./cmd/madharness-mini run "@skill:docs-writer обнови README"
-```
-
-Если skill не выбран явно, в `run` модель увидит компактный catalog и сможет
-сама вызвать `activate_skill`.
+Для модели это обычный инструмент с JSON Schema, а результат `tools/call`
+приводится к обычному observation.
 
 ## Документация ветки
 
@@ -97,6 +100,7 @@ go run ./cmd/madharness-mini run "@skill:docs-writer обнови README"
 - [Структура кода](docs/code-overview.md)
 - [Слой контекста](docs/context-layer.md)
 - [Agent Skills](docs/agent-skills.md)
+- [MCP](docs/mcp.md)
 - [Инструмент apply_patch](docs/apply-patch.md)
 
 ## Разработка самого проекта
@@ -111,13 +115,13 @@ go test ./...
 Быстрая ручная проверка CLI:
 
 ```bash
-go run ./cmd/madharness-mini skills validate
+go run ./cmd/madharness-mini run "Найди доступные инструменты и объясни, что они делают"
 ```
 
 ## Что дальше
 
-Следующая ветка `05-mcp` добавляет подключение внешних инструментов через
-минимальный stdio MCP-клиент.
+Следующая ветка `06-subagents` добавляет оркестрацию ролей: parent agent сможет
+делегировать задачи встроенным markdown-субагентам.
 
 ## Лицензирование
 

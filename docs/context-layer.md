@@ -37,10 +37,10 @@ messages и удалённые старые элементы истории. С�
 
 `agent.Run()` создаёт `Manager` через `agentcontext.BaseContext()`, читает
 встроенный prompt и `AGENTS.md`, затем добавляет их как закреплённые фрагменты.
-В ветке `04-Agents-Skills` перед этим запускается discovery skills. Если
-пользователь не выбрал skill явно, в `Manager` передаётся provider каталога
-skills; если skill уже активирован, он добавляется как durable system-фрагмент
-с id `skill:<name>`.
+В ветке `05-mcp` перед этим запускается discovery skills. Если пользователь не
+выбрал skill явно, в `Manager` передаётся provider каталога skills; если skill
+уже активирован, он добавляется как durable system-фрагмент с id
+`skill:<name>`.
 
 Закреплённый фрагмент — это часть контекста, которую нельзя удалить при обрезке
 старой истории. Например, системный prompt и правила проекта должны оставаться
@@ -97,11 +97,13 @@ tools остаётся больше `context_max_tokens`, harness заверша
 ## Расширение инструментов и контекста
 
 Инструменты расширяются через `tools.Provider`, а контекст — через
-`agentcontext.Provider`. В этой ветке skills используют обе точки подключения:
-catalog появляется как context provider, а `activate_skill` — как tool provider.
-Это две независимые границы:
+`agentcontext.Provider`. В этой ветке skills и MCP используют разные точки
+подключения: catalog появляется как context provider, `activate_skill` — как
+tool provider, а MCP provider добавляет tools из внешних stdio-серверов. Это
+независимые границы:
 
-- `tools.Provider.Specs(ctx)` отдаёт `tools.Spec` для вызова модели.
+- `tools.Provider.Specs(ctx)` отдаёт `tools.Spec` для вызова модели или ошибку
+  регистрации.
 - `agentcontext.Provider.Collect(state)` отдаёт инструкции или другие
   фрагменты, которые модель должна видеть перед вызовом инструмента.
 
