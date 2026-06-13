@@ -1,11 +1,13 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
-func (c *Config) applyEnv() {
+func (c *Config) applyEnv() error {
 	env := readEnvFile(c.CWD + "/.env")
 	for _, item := range os.Environ() {
 		key, value, ok := strings.Cut(item, "=")
@@ -22,6 +24,28 @@ func (c *Config) applyEnv() {
 	if value := env["MADHARNESS_MINI_API_KEY"]; value != "" {
 		c.Data.APIKey = value
 	}
+	if value := env["MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT"]; value != "" {
+		parsed, err := parseBoolEnv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", value)
+		if err != nil {
+			return err
+		}
+		c.Data.SupportsImageInput = parsed
+	}
+	if value := env["MADHARNESS_MINI_MAX_IMAGE_BYTES"]; value != "" {
+		parsed, err := parseIntEnv("MADHARNESS_MINI_MAX_IMAGE_BYTES", value)
+		if err != nil {
+			return err
+		}
+		c.Data.MaxImageBytes = parsed
+	}
+	if value := env["MADHARNESS_MINI_IMAGE_DETAIL"]; value != "" {
+		detail := strings.TrimSpace(value)
+		if !ImageDetailValues[detail] {
+			return fmt.Errorf("invalid MADHARNESS_MINI_IMAGE_DETAIL: %s; allowed: auto, high, low, original", detail)
+		}
+		c.Data.ImageDetail = detail
+	}
+	return nil
 }
 
 func readEnvFile(path string) map[string]string {
@@ -43,4 +67,26 @@ func readEnvFile(path string) map[string]string {
 		}
 	}
 	return data
+}
+
+func parseBoolEnv(name string, value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s: %s; expected true or false", name, value)
+	}
+}
+
+func parseIntEnv(name string, value string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %s; expected integer", name, value)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("invalid %s: %s; expected non-negative integer", name, value)
+	}
+	return parsed, nil
 }

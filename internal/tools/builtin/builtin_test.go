@@ -23,6 +23,19 @@ func TestBuiltinSchemasIncludeApplyPatch(t *testing.T) {
 	}
 }
 
+func TestBuiltinSchemasOrderIncludesReadImage(t *testing.T) {
+	registry := testRegistry(t)
+	names := []string{}
+	for _, schema := range registry.Schemas() {
+		fn := schema["function"].(map[string]any)
+		names = append(names, fn["name"].(string))
+	}
+	want := []string{"list_files", "read_file", "read_image", "write_file", "apply_patch", "search_code", "run_shell"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("names = %v", names)
+	}
+}
+
 func TestReadAndWriteFileTools(t *testing.T) {
 	registry := testRegistry(t)
 	obs := registry.Call("write_file", map[string]any{"path": "example/hello.txt", "content": "hello\n"})
@@ -119,6 +132,9 @@ func testRegistryWithConfig(t *testing.T) (*config.Config, *tools.Registry) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
+	t.Setenv("MADHARNESS_MINI_MAX_IMAGE_BYTES", "")
+	t.Setenv("MADHARNESS_MINI_IMAGE_DETAIL", "")
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

@@ -11,6 +11,9 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
+	t.Setenv("MADHARNESS_MINI_MAX_IMAGE_BYTES", "")
+	t.Setenv("MADHARNESS_MINI_IMAGE_DETAIL", "")
 }
 
 func TestDefaultsMergeWithFile(t *testing.T) {
@@ -62,6 +65,45 @@ func TestEnvFileOverridesConfig(t *testing.T) {
 	}
 	if cfg.Data.BaseURL != "https://new.example/v1" || cfg.Data.APIKey != "secret" {
 		t.Fatalf("env was not applied: %+v", cfg.Data)
+	}
+}
+
+func TestEnvFileOverridesImageSettingsWithTypes(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
+	env := "MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT=true\nMADHARNESS_MINI_MAX_IMAGE_BYTES=42\nMADHARNESS_MINI_IMAGE_DETAIL=high\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Data.SupportsImageInput || cfg.Data.MaxImageBytes != 42 || cfg.Data.ImageDetail != "high" {
+		t.Fatalf("image settings were not applied: %+v", cfg.Data)
+	}
+}
+
+func TestEnvFileRejectsInvalidImageSettings(t *testing.T) {
+	cases := map[string]string{
+		"bool":   "MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT=maybe\n",
+		"int":    "MADHARNESS_MINI_MAX_IMAGE_BYTES=-1\n",
+		"detail": "MADHARNESS_MINI_IMAGE_DETAIL=microscope\n",
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			cleanEnv(t)
+			root := t.TempDir()
+			mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
+			if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := New(root); err == nil {
+				t.Fatal("expected invalid image setting error")
+			}
+		})
 	}
 }
 

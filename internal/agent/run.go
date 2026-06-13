@@ -12,11 +12,14 @@ import (
 
 // Run запускает агентский цикл до финального ответа или max_turns.
 func Run(task string, cfg *config.Config) (string, string, error) {
+	return runWithClient(task, cfg, model.New(cfg))
+}
+
+func runWithClient(task string, cfg *config.Config, client chatClient) (string, string, error) {
 	tr, err := trace.New(cfg, "run")
 	if err != nil {
 		return "", "", err
 	}
-	client := model.New(cfg)
 	registry, err := tools.NewRegistry(cfg, builtin.Provider{})
 	if err != nil {
 		return "", tr.Path, err
@@ -48,8 +51,10 @@ func Run(task string, cfg *config.Config) (string, string, error) {
 			_ = tr.Write("session_end", map[string]any{"result": result})
 			return result, tr.Path, nil
 		}
+		followupMessages := []map[string]any{}
 		for _, call := range calls {
-			name, args, obs := executeToolCall(registry, call)
+			name, args, obs, followups := executeToolCall(registry, call)
+			followupMessages = append(followupMessages, followups...)
 			_ = tr.Write("tool_observation", map[string]any{
 				"tool":        name,
 				"args":        args,
@@ -62,6 +67,7 @@ func Run(task string, cfg *config.Config) (string, string, error) {
 				"content":      string(content),
 			})
 		}
+		messages = append(messages, followupMessages...)
 	}
 	result := "Agent stopped: max_turns exceeded."
 	_ = tr.Write("session_end", map[string]any{"result": result})
@@ -76,16 +82,17 @@ func toolCalls(message map[string]any) []any {
 	return calls
 }
 
-func executeToolCall(registry *tools.Registry, call any) (string, map[string]any, tools.Observation) {
+func executeToolCall(registry *tools.Registry, call any) (string, map[string]any, tools.Observation, []map[string]any) {
 	callMap, ok := call.(map[string]any)
 	if !ok {
-		return "tool_call", map[string]any{}, tools.Fail("tool_call", "invalid tool call: invalid shape")
+		return "tool_call", map[string]any{}, tools.Fail("tool_call", "invalid tool call: invalid shape"), nil
 	}
 	name, args, err := tools.ParseToolArgs(callMap)
 	if err != nil {
-		return "tool_call", map[string]any{}, tools.Fail("tool_call", "invalid tool call: "+err.Error())
+		return "tool_call", map[string]any{}, tools.Fail("tool_call", "invalid tool call: "+err.Error()), nil
 	}
-	return name, args, registry.Call(name, args)
+	obs, followups := registry.CallWithFollowups(name, args)
+	return name, args, obs, followups
 }
 
 func toolCallID(call any, fallback string) string {

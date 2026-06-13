@@ -5,16 +5,23 @@ import (
 	"fmt"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/instructions"
 	"github.com/MADTeacher/madharness-mini-go/internal/prompt"
 )
 
-// BaseMessages собирает стартовую историю: system prompt и задачу пользователя.
+// BaseMessages собирает стартовую историю: system prompt, AGENTS.md и задачу.
 func BaseMessages(cfg *config.Config, task string) ([]map[string]any, error) {
 	system, err := prompt.Load("system")
 	if err != nil {
 		return nil, err
 	}
-	_ = cfg
+	projectInstructions, err := instructions.LoadProject(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if projectInstructions != "" {
+		system += "\n\n# Project instructions\n\n" + projectInstructions
+	}
 	return []map[string]any{
 		{"role": "system", "content": system},
 		{"role": "user", "content": task},

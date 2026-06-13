@@ -48,13 +48,20 @@ func (r *Registry) Tools() []string {
 
 // Call выполняет handler или возвращает fail-наблюдение для неизвестного tool.
 func (r *Registry) Call(name string, args map[string]any) Observation {
+	obs, _ := r.CallWithFollowups(name, args)
+	return obs
+}
+
+// CallWithFollowups выполняет tool и отделяет скрытые сообщения от observation.
+func (r *Registry) CallWithFollowups(name string, args map[string]any) (Observation, []map[string]any) {
 	tool, ok := r.tools[name]
 	if !ok {
-		return Fail(name, "unknown tool")
+		return Fail(name, "unknown tool"), nil
 	}
-	return recoverCall(name, func() Observation {
+	obs := recoverCall(name, func() Observation {
 		return tool.Handler(r.ctx, args)
 	})
+	return splitFollowupMessages(obs)
 }
 
 func recoverCall(name string, call func() Observation) (obs Observation) {
@@ -64,4 +71,26 @@ func recoverCall(name string, call func() Observation) (obs Observation) {
 		}
 	}()
 	return call()
+}
+
+func splitFollowupMessages(obs Observation) (Observation, []map[string]any) {
+	raw, ok := obs["_followup_messages"]
+	if !ok {
+		return obs, nil
+	}
+	delete(obs, "_followup_messages")
+	switch messages := raw.(type) {
+	case []map[string]any:
+		return obs, messages
+	case []any:
+		out := []map[string]any{}
+		for _, item := range messages {
+			if message, ok := item.(map[string]any); ok {
+				out = append(out, message)
+			}
+		}
+		return obs, out
+	default:
+		return obs, nil
+	}
 }

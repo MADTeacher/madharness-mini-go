@@ -4,6 +4,7 @@ package builtin
 import (
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/filetools"
+	"github.com/MADTeacher/madharness-mini-go/internal/tools/imagetool"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/patchtool"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/searchtool"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/shelltool"
@@ -16,7 +17,10 @@ type Provider struct{}
 func (Provider) Specs(ctx *tools.Context) []tools.Spec {
 	_ = ctx
 	specs := []tools.Spec{}
-	specs = append(specs, filetools.Specs()...)
+	files := filetools.Specs()
+	specs = append(specs, files[0], files[1])
+	specs = append(specs, imagetool.Spec())
+	specs = append(specs, files[2])
 	specs = append(specs, patchtool.Spec())
 	specs = append(specs, searchtool.Spec())
 	specs = append(specs, shelltool.Spec())
