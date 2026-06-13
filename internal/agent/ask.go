@@ -12,11 +12,23 @@ func Ask(task string, cfg *config.Config) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	messages, err := BaseMessages(cfg, task)
+	context, err := BaseContext(cfg, task)
 	if err != nil {
 		return "", "", err
 	}
-	_ = tr.Write("model_call_started", map[string]any{"tools_count": 0})
+	messages, err := context.Messages(nil)
+	if err != nil {
+		_ = tr.Write("context_error", map[string]any{
+			"error":          err.Error(),
+			"context_report": safeContextReport(context),
+		})
+		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		return "", tr.Path, err
+	}
+	_ = tr.Write("model_call_started", map[string]any{
+		"tools_count":    0,
+		"context_report": context.Report(),
+	})
 	raw, err := callModelWithRateLimitRetry(model.New(cfg), tr, messages, nil, nil)
 	if err != nil {
 		_ = tr.Write("model_error", map[string]any{"error": err.Error()})

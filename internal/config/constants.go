@@ -14,17 +14,19 @@ var ImageDetailValues = map[string]bool{
 // DefaultSettings задаёт минимальную рабочую конфигурацию текущей учебной ветки.
 func DefaultSettings() Settings {
 	return Settings{
-		Model:              "deepseek/deepseek-v4-flash",
-		BaseURL:            "https://openrouter.ai/api/v1",
-		APIKey:             "",
-		Temperature:        0.2,
-		MaxTurns:           50,
-		WorkspaceRoot:      ".",
-		ProtectedPaths:     []string{".git", ".env", "secrets", "~/.ssh"},
-		AllowShell:         true,
-		SupportsImageInput: false,
-		MaxImageBytes:      5_000_000,
-		ImageDetail:        "auto",
-		Headers:            map[string]string{},
+		Model:                  "deepseek/deepseek-v4-flash",
+		BaseURL:                "https://openrouter.ai/api/v1",
+		APIKey:                 "",
+		Temperature:            0.2,
+		MaxTurns:               50,
+		ContextMaxTokens:       60000,
+		ContextKeepRecentTurns: 3,
+		WorkspaceRoot:          ".",
+		ProtectedPaths:         []string{".git", ".env", "secrets", "~/.ssh"},
+		AllowShell:             true,
+		SupportsImageInput:     false,
+		MaxImageBytes:          5_000_000,
+		ImageDetail:            "auto",
+		Headers:                map[string]string{},
 	}
 }

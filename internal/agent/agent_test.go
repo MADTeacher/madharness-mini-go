@@ -34,6 +34,7 @@ func (f *fakeClient) Chat(messages []map[string]any, tools []map[string]any) (ma
 type sequenceClient struct {
 	responses []map[string]any
 	seen      [][]map[string]any
+	toolsSeen [][]map[string]any
 }
 
 func (s *sequenceClient) Chat(messages []map[string]any, tools []map[string]any) (map[string]any, error) {
@@ -41,6 +42,10 @@ func (s *sequenceClient) Chat(messages []map[string]any, tools []map[string]any)
 	copied := []map[string]any{}
 	_ = json.Unmarshal(raw, &copied)
 	s.seen = append(s.seen, copied)
+	toolsRaw, _ := json.Marshal(tools)
+	toolsCopied := []map[string]any{}
+	_ = json.Unmarshal(toolsRaw, &toolsCopied)
+	s.toolsSeen = append(s.toolsSeen, toolsCopied)
 	index := len(s.seen) - 1
 	return s.responses[index], nil
 }

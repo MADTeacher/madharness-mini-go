@@ -4,28 +4,22 @@ package agent
 import (
 	"fmt"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
-	"github.com/MADTeacher/madharness-mini-go/internal/instructions"
-	"github.com/MADTeacher/madharness-mini-go/internal/prompt"
 )
 
-// BaseMessages собирает стартовую историю: system prompt, AGENTS.md и задачу.
+// BaseContext собирает стартовый слой контекста: system prompt, AGENTS.md и задачу.
+func BaseContext(cfg *config.Config, task string) (*agentcontext.Manager, error) {
+	return agentcontext.BaseContext(cfg, task)
+}
+
+// BaseMessages сохраняет старый контракт тестов и внешних учебных патчей.
 func BaseMessages(cfg *config.Config, task string) ([]map[string]any, error) {
-	system, err := prompt.Load("system")
+	context, err := BaseContext(cfg, task)
 	if err != nil {
 		return nil, err
 	}
-	projectInstructions, err := instructions.LoadProject(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if projectInstructions != "" {
-		system += "\n\n# Project instructions\n\n" + projectInstructions
-	}
-	return []map[string]any{
-		{"role": "system", "content": system},
-		{"role": "user", "content": task},
-	}, nil
+	return context.Messages(nil)
 }
 
 func responseMessage(raw map[string]any) (map[string]any, error) {

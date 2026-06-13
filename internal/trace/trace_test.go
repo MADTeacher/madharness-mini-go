@@ -17,6 +17,20 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	if err := tr.Write("tool_observation", map[string]any{"tool": "list_files"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := tr.Write("model_call_started", map[string]any{"context_report": map[string]any{
+		"request_tokens_estimate": 120,
+		"max_tokens":              60000,
+		"tools_tokens_estimate":   30,
+		"fragments":               []any{map[string]any{"id": "system"}},
+		"history": map[string]any{
+			"total_entries":         2,
+			"rendered_entries":      1,
+			"clipped_tool_messages": []any{map[string]any{"tool_call_id": "call_1"}},
+			"dropped_entries":       []any{},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := tr.Write("session_end", map[string]any{"result": "ok"}); err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +39,10 @@ func TestTraceWriteAndSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(summary, "tool calls: 1") || !strings.Contains(summary, "result: ok") {
+		t.Fatalf("summary = %s", summary)
+	}
+	if !strings.Contains(summary, "context: 120/60000 estimated tokens") ||
+		!strings.Contains(summary, "clipped tool messages: 1") {
 		t.Fatalf("summary = %s", summary)
 	}
 }

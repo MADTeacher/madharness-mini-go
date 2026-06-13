@@ -31,6 +31,7 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	}
 	toolCalls := 0
 	result := ""
+	var contextReport map[string]any
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -41,15 +42,68 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 		if event["event"] == "tool_observation" {
 			toolCalls++
 		}
+		if report, ok := event["context_report"].(map[string]any); ok {
+			contextReport = report
+		}
 	}
 	result = truncateRunes(result, 1000)
+	lines := []string{
+		fmt.Sprintf("trace: %s", path),
+		fmt.Sprintf("events: %d", len(events)),
+		fmt.Sprintf("tool calls: %d", toolCalls),
+	}
+	if contextReport != nil {
+		lines = append(lines, summarizeContextReport(contextReport))
+	}
+	lines = append(lines, fmt.Sprintf("result: %s", result))
+	return strings.Join(lines, "\n"), nil
+}
+
+func summarizeContextReport(report map[string]any) string {
+	history, _ := report["history"].(map[string]any)
+	requestTokens := intFromAny(report["request_tokens_estimate"])
+	maxTokens := intFromAny(report["max_tokens"])
+	toolsTokens := intFromAny(report["tools_tokens_estimate"])
+	fragments, _ := report["fragments"].([]any)
+	totalEntries := intFromAny(history["total_entries"])
+	renderedEntries := intFromAny(history["rendered_entries"])
+	clipped := lenFromAny(history["clipped_tool_messages"])
+	dropped := lenFromAny(history["dropped_entries"])
 	return fmt.Sprintf(
-		"trace: %s\nevents: %d\ntool calls: %d\nresult: %s",
-		path,
-		len(events),
-		toolCalls,
-		result,
-	), nil
+		"context: %d/%d estimated tokens; tools: %d; fragments: %d; history: %d/%d entries; clipped tool messages: %d; dropped entries: %d",
+		requestTokens,
+		maxTokens,
+		toolsTokens,
+		len(fragments),
+		renderedEntries,
+		totalEntries,
+		clipped,
+		dropped,
+	)
+}
+
+func intFromAny(value any) int {
+	switch item := value.(type) {
+	case int:
+		return item
+	case int64:
+		return int(item)
+	case float64:
+		return int(item)
+	default:
+		return 0
+	}
+}
+
+func lenFromAny(value any) int {
+	switch items := value.(type) {
+	case []any:
+		return len(items)
+	case []map[string]any:
+		return len(items)
+	default:
+		return 0
+	}
 }
 
 func truncateRunes(text string, limit int) string {

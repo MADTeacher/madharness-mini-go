@@ -9,18 +9,20 @@ import (
 
 // Settings хранит поля .madharness-mini/config.json, которые видит CLI и loop.
 type Settings struct {
-	Model              string            `json:"model"`
-	BaseURL            string            `json:"base_url"`
-	APIKey             string            `json:"api_key"`
-	Temperature        float64           `json:"temperature"`
-	MaxTurns           int               `json:"max_turns"`
-	WorkspaceRoot      string            `json:"workspace_root"`
-	ProtectedPaths     []string          `json:"protected_paths"`
-	AllowShell         bool              `json:"allow_shell"`
-	SupportsImageInput bool              `json:"supports_image_input"`
-	MaxImageBytes      int               `json:"max_image_bytes"`
-	ImageDetail        string            `json:"image_detail"`
-	Headers            map[string]string `json:"headers,omitempty"`
+	Model                  string            `json:"model"`
+	BaseURL                string            `json:"base_url"`
+	APIKey                 string            `json:"api_key"`
+	Temperature            float64           `json:"temperature"`
+	MaxTurns               int               `json:"max_turns"`
+	ContextMaxTokens       int               `json:"context_max_tokens"`
+	ContextKeepRecentTurns int               `json:"context_keep_recent_turns"`
+	WorkspaceRoot          string            `json:"workspace_root"`
+	ProtectedPaths         []string          `json:"protected_paths"`
+	AllowShell             bool              `json:"allow_shell"`
+	SupportsImageInput     bool              `json:"supports_image_input"`
+	MaxImageBytes          int               `json:"max_image_bytes"`
+	ImageDetail            string            `json:"image_detail"`
+	Headers                map[string]string `json:"headers,omitempty"`
 }
 
 // Config связывает настройки запуска с абсолютными путями текущего workspace.

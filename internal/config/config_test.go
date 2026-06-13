@@ -31,6 +31,9 @@ func TestDefaultsMergeWithFile(t *testing.T) {
 	if !cfg.Data.AllowShell {
 		t.Fatal("allow_shell should remain true")
 	}
+	if cfg.Data.ContextMaxTokens != 60000 || cfg.Data.ContextKeepRecentTurns != 3 {
+		t.Fatalf("context defaults = %d, %d", cfg.Data.ContextMaxTokens, cfg.Data.ContextKeepRecentTurns)
+	}
 }
 
 func TestConfigIgnoresLegacyProviderFields(t *testing.T) {
