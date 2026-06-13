@@ -1,40 +1,41 @@
 # madharness-mini-go
 
-> Учебная ветка: `07-hooks`
->
-> Тема главы: lifecycle hooks как проектный слой аудита и блокировки действий
-> агента.
->
-> В этой точке harness умеет читать `.madharness-mini/hooks.json`, отправлять
-> JSON-события локальным command hooks, писать hook-аудит в trace и блокировать
-> `before_tool_call` до запуска handler-а.
->
-> Лабораторные работы: [LABS.md](LABS.md)
-> Предыдущая ветка: `06-subagents`
+`madharness-mini-go` — учебный минималистичный harness для курса, книги и
+лабораторных работ по harness-инженерии кодирующих ИИ-агентов.
 
-`madharness-mini-go` - учебный минималистичный harness для работы кодирующего
-ИИ-агента с локальным программным продуктом. Эта ветка показывает полный набор
-механизмов Go-порта: workspace tools, проектные инструкции, context layer,
-Agent Skills, MCP, субагентов и hooks.
+Репозиторий устроен как учебный маршрут: каждая ветка фиксирует отдельную
+ступень развития harness, а внутри ветки лежат актуальные для этой ступени
+`README.md`, `LABS.md` и `docs/`.
+
+Ветка `main` показывает полную версию Go-порта с проектными инструкциями,
+слоем контекста, Agent Skills, MCP, субагентами и hooks.
 
 Проект написан для Go 1.25 и использует только стандартную библиотеку. Внутри
 используется OpenAI-совместимый API `/chat/completions`, поэтому можно
 подключить OpenRouter, KodikRouter, локальный совместимый сервер или другой
 сервис с тем же форматом API.
 
-## Что есть в этой ветке
+## Учебный маршрут
 
-- команды `init`, `ask`, `run`, `trace`, `skills` и `subagents`;
-- проектные инструкции `AGENTS.md`;
-- слой контекста с бюджетом и `context_report`;
-- project-local Agent Skills и `activate_skill`;
-- stdio MCP tools через `.madharness-mini/mcp.json`;
-- markdown-субагенты, `delegate_task`, `ask_user` и дочерние traces;
-- lifecycle hooks из `.madharness-mini/hooks.json`;
-- redaction payload перед передачей hook-команде;
-- блокировка tool call через `before_tool_call`.
+| Ветка | Тема | Главный вопрос |
+| --- | --- | --- |
+| [`01-minimalistic-harness`](https://github.com/MADTeacher/madharness-mini-go/tree/01-minimalistic-harness) | Минимальный harness | Как устроить базовый цикл: модель, инструменты, трасса? |
+| [`02-AGENTS-md`](https://github.com/MADTeacher/madharness-mini-go/tree/02-AGENTS-md) | Проектные инструкции и изображения | Как добавить локальные правила проекта и vision input? |
+| [`03-Context-Layer`](https://github.com/MADTeacher/madharness-mini-go/tree/03-Context-Layer) | Слой контекста | Что именно модель видит перед каждым вызовом? |
+| [`04-Agents-Skills`](https://github.com/MADTeacher/madharness-mini-go/tree/04-Agents-Skills) | Agent Skills | Как подключать рабочие инструкции без изменения ядра? |
+| [`05-mcp`](https://github.com/MADTeacher/madharness-mini-go/tree/05-mcp) | MCP-инструменты | Как превратить внешний stdio MCP-сервер в обычные инструменты модели? |
+| [`06-subagents`](https://github.com/MADTeacher/madharness-mini-go/tree/06-subagents) | Субагенты | Как делегировать задачи ролям с отдельными инструментами и трассами? |
+| [`07-hooks`](https://github.com/MADTeacher/madharness-mini-go/tree/07-hooks) | Hooks | Как добавить проектный аудит и блокировку действий? |
 
-## Быстрый запуск
+Подробная карта курса: [COURSE.md](COURSE.md).
+
+В каждой учебной ветке:
+
+- `README.md` объясняет, где вы находитесь и что умеет эта версия;
+- `LABS.md` содержит задачи трёх уровней без оценок времени;
+- `docs/README.md` ведёт к актуальным документам этой ветки.
+
+## Быстрый старт финальной версии
 
 Перейдите в корень проекта:
 
@@ -57,45 +58,27 @@ go run ./cmd/madharness-mini init \
 go run ./cmd/madharness-mini init --no-prompt
 ```
 
+Задайте вопрос без инструментов:
+
+```bash
+go run ./cmd/madharness-mini ask "Объясни, что делает этот проект"
+```
+
 Запустите агентский режим:
 
 ```bash
 go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
 ```
 
-## Минимальный hook
+Посмотрите трассу:
 
-Создайте `.madharness-mini/hooks.json`:
-
-```json
-{
-  "hooks": [
-    {
-      "id": "deny-shell",
-      "event": "before_tool_call",
-      "match": { "tool": "run_shell" },
-      "command": "python3",
-      "args": ["scripts/hooks/deny_shell.py"],
-      "cwd": ".",
-      "timeout_seconds": 3
-    }
-  ]
-}
+```bash
+go run ./cmd/madharness-mini trace <trace-id>
 ```
 
-Hook-команда получает событие в stdin. Если она печатает:
+## Финальная документация
 
-```json
-{ "ok": false, "block": "shell запрещён правилами проекта" }
-```
-
-handler инструмента не запускается, а модель получает обычное fail-observation.
-Остальные события нужны для аудита и диагностики; сейчас блокировать действие
-может только `before_tool_call`.
-
-## Документация ветки
-
-- [Возможности ветки](docs/capabilities.md)
+- [Возможности полной версии](docs/capabilities.md)
 - [Структура кода](docs/code-overview.md)
 - [Слой контекста](docs/context-layer.md)
 - [Agent Skills](docs/agent-skills.md)
@@ -116,16 +99,9 @@ go test ./...
 Быстрая ручная проверка CLI:
 
 ```bash
-go run ./cmd/madharness-mini run "Объясни, какие hooks подключены в этом проекте"
-go run ./cmd/madharness-mini trace <trace-id>
+go run ./cmd/madharness-mini ask "Объясни, что делает этот проект"
+go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
 ```
-
-## Как читать эту ветку
-
-Это самая полная учебная точка Go-порта. Если вы пришли из книги или курса,
-сначала посмотрите [LABS.md](LABS.md), затем откройте
-[docs/README.md](docs/README.md) и переходите в конкретный документ по
-механизму, который сейчас изучаете.
 
 ## Лицензирование
 
