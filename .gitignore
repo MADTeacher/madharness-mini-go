@@ -1,0 +1,14 @@
+.madharness-mini/
+.env
+.cache/
+.DS_Store
+
+# Локальные агентские правила и рабочие каталоги не входят в учебный исходник.
+AGENTS.md
+.agents/
+PORTING_WORKPLAN.local.md
+
+# Go build/test artifacts.
+bin/
+coverage.out
+*.test

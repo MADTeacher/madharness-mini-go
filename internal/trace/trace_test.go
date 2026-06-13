@@ -1,0 +1,49 @@
+package trace
+
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/MADTeacher/madharness-mini-go/internal/config"
+)
+
+func TestTraceWriteAndSummary(t *testing.T) {
+	cfg := testTraceConfig(t)
+	tr, err := New(cfg, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Write("tool_observation", map[string]any{"tool": "list_files"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Write("session_end", map[string]any{"result": "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := Summarize(cfg, tr.ID[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "tool calls: 1") || !strings.Contains(summary, "result: ok") {
+		t.Fatalf("summary = %s", summary)
+	}
+}
+
+func TestSummaryTruncatesUTF8Safely(t *testing.T) {
+	text := strings.Repeat("Ж", 1200)
+	if got := truncateRunes(text, 1000); len([]rune(got)) != 1000 || !utf8.ValidString(got) {
+		t.Fatalf("bad truncation")
+	}
+}
+
+func testTraceConfig(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("MADHARNESS_MINI_MODEL", "")
+	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
+	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}

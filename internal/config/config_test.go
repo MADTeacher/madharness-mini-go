@@ -1,0 +1,112 @@
+package config
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func cleanEnv(t *testing.T) {
+	t.Setenv("MADHARNESS_MINI_MODEL", "")
+	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
+	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+}
+
+func TestDefaultsMergeWithFile(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Data.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("base_url = %q", cfg.Data.BaseURL)
+	}
+	if !cfg.Data.AllowShell {
+		t.Fatal("allow_shell should remain true")
+	}
+}
+
+func TestConfigIgnoresLegacyProviderFields(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{
+		"provider":  "kodikrouter",
+		"providers": map[string]any{"kodikrouter": map[string]any{"base_url": "https://example.test/v1"}},
+	})
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Data.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("base_url = %q", cfg.Data.BaseURL)
+	}
+}
+
+func TestEnvFileOverridesConfig(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{"model": "old", "base_url": "https://old.example/v1"})
+	env := "MADHARNESS_MINI_BASE_URL=https://new.example/v1\nMADHARNESS_MINI_MODEL=deepseek/deepseek-v4-flash\nMADHARNESS_MINI_API_KEY=secret\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Data.BaseURL != "https://new.example/v1" || cfg.Data.APIKey != "secret" {
+		t.Fatalf("env was not applied: %+v", cfg.Data)
+	}
+}
+
+func TestInitializeCreatesConfigWithAPIKey(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, changes, err := cfg.Initialize(InitOptions{
+		BaseURL: "https://kodikrouter.ru/api/v1",
+		Model:   "deepseek/deepseek-v4-flash",
+		APIKey:  "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) == 0 || filepath.Base(path) != "config.json" {
+		t.Fatalf("unexpected init result path=%s changes=%v", path, changes)
+	}
+	data := map[string]any{}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["api_key"] != "secret" {
+		t.Fatalf("api_key = %v", data["api_key"])
+	}
+}
+
+func mustWriteConfig(t *testing.T, root string, data map[string]any) {
+	t.Helper()
+	dir := filepath.Join(root, StateDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
