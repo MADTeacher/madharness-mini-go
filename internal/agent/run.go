@@ -6,6 +6,7 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/mcp"
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
 	"github.com/MADTeacher/madharness-mini-go/internal/skills"
@@ -39,11 +40,21 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	if err != nil {
 		return "", "", err
 	}
+	hookManager, err := hooks.FromConfig(cfg, tr)
+	if err != nil {
+		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		return "", tr.Path, err
+	}
+	hookManager.Emit("session_start", "run", map[string]any{
+		"task_preview": truncateForHook(task, 1000),
+		"cwd":          cfg.CWD,
+	})
 	index := skills.Discover(cfg)
 	subagentIndex := subagents.Discover(cfg)
 	orchestration, err := subagents.ResolveOrchestrationMode(cfg, task, options.OrchestrationMode)
 	if err != nil {
 		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		emitSessionError(hookManager, "run", err, nil)
 		return "", tr.Path, err
 	}
 	_ = tr.Write("orchestration_mode", map[string]any{
@@ -74,6 +85,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		names := strings.Join(selection.Unknown, ", ")
 		err := fmt.Errorf("unknown skill: %s", names)
 		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		emitSessionError(hookManager, "run", err, nil)
 		return "", tr.Path, err
 	}
 	runtime := skills.NewRuntime(cfg, index)
@@ -89,7 +101,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
 			Index: subagentIndex,
 			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
-				return runSubagent(cfg, client, tr, subagent, args)
+				return runSubagent(cfg, client, tr, subagent, args, hookManager)
 			},
 		})
 	}
@@ -102,11 +114,15 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {
+		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		emitSessionError(hookManager, "run", err, nil)
 		return "", tr.Path, err
 	}
 	defer registry.Close()
 	context, err := BaseContext(cfg, task, contextProviders...)
 	if err != nil {
+		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		emitSessionError(hookManager, "run", err, nil)
 		return "", tr.Path, err
 	}
 	if orchestration.Effective == "required" {
@@ -117,11 +133,15 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		if obs["ok"] != true {
 			err := fmt.Errorf("%v", obs["summary"])
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+			emitSessionError(hookManager, "run", err, nil)
 			return "", tr.Path, err
 		}
 		applyHiddenObservationEffects(context, tr, obs)
 	}
-	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{})
+	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{
+		Hooks: hookManager,
+		Kind:  "run",
+	})
 	return result.Result, tr.Path, err
 }
 

@@ -30,12 +30,12 @@ Skill не является плагином и не получает отдел
 Поддерживаются два каталога:
 
 ```text
-.madharness_mini/skills
+.madharness-mini/skills
 .agents/skills
 ```
 
 Каждая прямая подпапка с валидным `SKILL.md` считается кандидатом. Если одно и
-то же `name` найдено в обоих каталогах, версия из `.madharness_mini/skills`
+то же `name` найдено в обоих каталогах, версия из `.madharness-mini/skills`
 перекрывает версию из `.agents/skills`.
 
 ## Формат SKILL.md
@@ -81,7 +81,7 @@ Skills подключаются только в режиме `run`. Режим `
 Поток `run`:
 
 1. `Config` определяет `workspace_root`.
-2. Loader сканирует `.madharness_mini/skills` и `.agents/skills`.
+2. Loader сканирует `.madharness-mini/skills` и `.agents/skills`.
 3. Frontmatter каждого `SKILL.md` превращается в индекс skills.
 4. В трассу пишется `skills_discovered`.
 5. Если пользователь явно указал skill, он активируется до первого обращения к модели.

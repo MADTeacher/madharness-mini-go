@@ -5,12 +5,15 @@ import (
 	"strings"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
+	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 type loopOptions struct {
 	StopOnUserInput bool
+	Hooks           *hooks.Manager
+	Kind            string
 }
 
 type loopResult struct {
@@ -28,6 +31,10 @@ func runModelLoop(
 	maxTurns int,
 	options loopOptions,
 ) (loopResult, error) {
+	kind := options.Kind
+	if kind == "" {
+		kind = "run"
+	}
 	for turn := 0; turn < maxTurns; turn++ {
 		toolSchemas := registry.Schemas()
 		messages, err := context.Messages(toolSchemas)
@@ -38,35 +45,53 @@ func runModelLoop(
 				"context_report": safeContextReport(context),
 			})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+			emitSessionError(options.Hooks, kind, err, turn)
 			return loopResult{}, err
 		}
+		contextReport := context.Report()
 		_ = tr.Write("model_call_started", map[string]any{
 			"turn":           turn,
 			"tools_count":    len(toolSchemas),
-			"context_report": context.Report(),
+			"context_report": contextReport,
+		})
+		emitHook(options.Hooks, "before_model_call", kind, map[string]any{
+			"turn":           turn,
+			"tools_count":    len(toolSchemas),
+			"context_report": contextReport,
 		})
 		raw, err := callModelWithRateLimitRetry(client, tr, messages, toolSchemas, map[string]any{"turn": turn})
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+			emitSessionError(options.Hooks, kind, err, turn)
 			return loopResult{}, err
 		}
 		message, err := responseMessage(raw)
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
 			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+			emitSessionError(options.Hooks, kind, err, turn)
 			return loopResult{}, err
 		}
 		_ = tr.Write("model_call_finished", map[string]any{"turn": turn, "message": message})
+		emitHook(options.Hooks, "after_model_call", kind, map[string]any{
+			"turn":    turn,
+			"message": modelMessageSummary(message),
+		})
 		context.RecordAssistant(message)
 		calls := toolCalls(message)
 		if len(calls) == 0 {
 			result := messageContent(message)
 			_ = tr.Write("session_end", map[string]any{"result": result})
+			emitHook(options.Hooks, "session_end", kind, map[string]any{
+				"status":         "done",
+				"turns":          turn + 1,
+				"result_preview": truncateForHook(result, 1000),
+			})
 			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
 		for _, call := range calls {
-			name, args, obs, followups, callMap := executeToolCall(registry, call)
+			name, args, obs, followups, callMap := executeToolCall(registry, call, options.Hooks, kind, turn)
 			subagentStop := stringObservationField(obs, "_subagent_stop")
 			if subagentStop != "" {
 				delete(obs, "_subagent_stop")
@@ -77,9 +102,20 @@ func runModelLoop(
 				"args":        args,
 				"observation": obs,
 			})
+			emitHook(options.Hooks, "after_tool_call", kind, map[string]any{
+				"turn":        turn,
+				"tool":        name,
+				"args":        args,
+				"observation": obs,
+			})
 			if options.StopOnUserInput && subagentStop == "needs_user_input" {
 				result := "needs_user_input: " + stringObservationField(obs, "question")
 				_ = tr.Write("session_end", map[string]any{"result": result})
+				emitHook(options.Hooks, "session_end", kind, map[string]any{
+					"status":         "needs_user_input",
+					"turns":          turn + 1,
+					"result_preview": truncateForHook(stringObservationField(obs, "question"), 1000),
+				})
 				return loopResult{
 					Status:      "needs_user_input",
 					Result:      stringObservationField(obs, "question"),
@@ -99,12 +135,22 @@ func runModelLoop(
 					"subagent_trace_path": stringObservationField(obs, "subagent_trace_path"),
 				})
 				_ = tr.Write("session_end", map[string]any{"result": result})
+				emitHook(options.Hooks, "session_end", kind, map[string]any{
+					"status":         "needs_user_input",
+					"turns":          turn + 1,
+					"result_preview": truncateForHook(result, 1000),
+				})
 				return loopResult{Status: "needs_user_input", Result: result, Turns: turn + 1, Observation: obs}, nil
 			}
 		}
 	}
 	result := "Agent stopped: max_turns exceeded."
 	_ = tr.Write("session_end", map[string]any{"result": result})
+	emitHook(options.Hooks, "session_end", kind, map[string]any{
+		"status":         "max_turns",
+		"turns":          maxTurns,
+		"result_preview": result,
+	})
 	return loopResult{Status: "max_turns", Result: result, Turns: maxTurns}, nil
 }
 
@@ -124,7 +170,13 @@ func toolCalls(message map[string]any) []any {
 	return out
 }
 
-func executeToolCall(registry *tools.Registry, call any) (string, map[string]any, tools.Observation, []map[string]any, map[string]any) {
+func executeToolCall(
+	registry *tools.Registry,
+	call any,
+	manager *hooks.Manager,
+	kind string,
+	turn int,
+) (string, map[string]any, tools.Observation, []map[string]any, map[string]any) {
 	callMap, ok := call.(map[string]any)
 	if !ok {
 		obs := tools.Fail("tool_call", "invalid tool call: invalid shape")
@@ -134,6 +186,17 @@ func executeToolCall(registry *tools.Registry, call any) (string, map[string]any
 	if err != nil {
 		obs := tools.Fail("tool_call", "invalid tool call: "+err.Error())
 		return "tool_call", map[string]any{}, obs, nil, callMap
+	}
+	decision := emitHook(manager, "before_tool_call", kind, map[string]any{
+		"turn":    turn,
+		"call_id": stringFromAny(callMap["id"]),
+		"tool":    name,
+		"args":    args,
+	})
+	if !decision.OK {
+		return name, args, tools.Fail(name, "blocked by hook: "+decision.Block, map[string]any{
+			"hook_blocked": true,
+		}), nil, callMap
 	}
 	obs, followups := registry.CallWithFollowups(name, args)
 	return name, args, obs, followups, callMap

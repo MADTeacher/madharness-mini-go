@@ -1,8 +1,7 @@
 # Возможности ветки
 
-`06-subagents` добавляет оркестрацию markdown-субагентов. Parent agent может
-делегировать подзадачу роли, которая получает отдельный prompt, allow-list tools,
-лимиты и собственный trace.
+`07-hooks` - финальная учебная точка Go-порта. Здесь собраны механизмы
+предыдущих веток и добавлен проектный слой lifecycle hooks вокруг agent loop.
 
 ## Команды CLI
 
@@ -10,62 +9,56 @@
 | --- | --- |
 | `madharness-mini init` | Создаёт или обновляет `.madharness-mini/config.json`. |
 | `madharness-mini ask "..."` | Отправляет один запрос модели без tools. |
-| `madharness-mini run "..."` | Запускает parent agent loop. |
+| `madharness-mini run "..."` | Запускает agent loop с tools, context, skills, MCP, subagents и hooks. |
 | `madharness-mini trace <id>` | Показывает краткую сводку JSONL-трассы. |
 | `madharness-mini skills list/show/validate` | Диагностирует project-local Agent Skills. |
 | `madharness-mini subagents list/show/validate` | Диагностирует встроенных и project-local субагентов. |
 
 При локальной разработке команда запускается как `go run ./cmd/madharness-mini`.
 
-## Оркестрация
+## Hooks
 
-Режим задаётся полем `orchestration_mode`, переменной
-`MADHARNESS_MINI_ORCHESTRATION_MODE` или CLI-флагами:
-
-| Режим | Поведение |
-| --- | --- |
-| `off` | `delegate_task` не добавляется. |
-| `requested` | Делегация появляется только при явном запросе пользователя. |
-| `auto` | Parent видит `delegate_task`, но может решить задачу сам. |
-| `required` | Parent выступает координатором и делегирует правки ролям. |
-
-## Субагенты
-
-Встроенные роли лежат в `internal/subagents/prompts/subagents/`: `researcher`,
-`planner`, `implementer`, `reviewer`.
-
-Project-local роли добавляются в:
+Hooks настраиваются в:
 
 ```text
-.madharness-mini/subagents/<name>.md
+.madharness-mini/hooks.json
 ```
 
-Frontmatter задаёт `name`, `description`, `profile`, `tools`, `max_turns` и
-другие лимиты. Markdown-body становится системным prompt роли.
+Hook - это локальная command handler, которая получает JSON-событие в stdin.
+События: `session_start`, `before_model_call`, `after_model_call`,
+`before_tool_call`, `after_tool_call`, `session_end`, `session_error`.
 
-`profile` помогает описать тип роли, но фактические полномочия задаёт список
-`tools`. Субагент не получает `delegate_task`, чтобы не запускать рекурсивную
-оркестрацию.
+Только `before_tool_call` может остановить действие. Для блокировки hook
+возвращает JSON:
 
-## Инструменты
+```json
+{ "ok": false, "block": "причина блокировки" }
+```
 
-К tools предыдущей ветки добавляются:
+Harness не запускает tool handler и возвращает модели обычное observation
+`ok=false`.
 
-| Инструмент | Где доступен |
-| --- | --- |
-| `delegate_task` | Parent agent, если режим оркестрации разрешает делегацию. |
-| `ask_user` | Только внутри субагента, если указан в его `tools`. |
+## Остальные механизмы
 
-`ask_user` не читает stdin. Он завершает текущую делегацию статусом
-`needs_user_input`, а основной `run` печатает вопрос пользователю.
+Ветка сохраняет:
 
-## Trace
+- `AGENTS.md` как проектные инструкции;
+- context budget и `context_report`;
+- `read_image` для vision input;
+- Agent Skills и `activate_skill`;
+- stdio MCP tools;
+- markdown-субагентов, `delegate_task`, `ask_user` и дочерние traces;
+- базовые workspace tools: `list_files`, `read_file`, `search_code`,
+  `write_file`, `apply_patch`, `run_shell`.
 
-У субагента появляется отдельный дочерний trace-файл. Родительская трасса пишет
-`subagent_started`, `subagent_finished` или `subagent_failed` и ссылку на этот
-локальный trace.
+## Безопасность hooks
 
-## Что не входит в эту ветку
+- `command` и `args` запускаются без shell;
+- `cwd` должен быть внутри workspace и проходить общую policy;
+- payload обрезается и проходит redaction очевидных секретов;
+- `MADHARNESS_MINI_*` не наследуются hook-командой автоматически;
+- ошибки audit hooks пишутся в trace и обычно не ломают запуск;
+- блокировка имеет смысл только для `before_tool_call`.
 
-Здесь ещё нет hooks. Субагенты управляют ролями и делегацией, но не добавляют
-lifecycle-политику перед каждым tool call.
+Hooks не заменяют `Policy`. Они добавляют проектные правила поверх общей защиты
+workspace, shell-команд и protected paths.

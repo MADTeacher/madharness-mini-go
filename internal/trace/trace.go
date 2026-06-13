@@ -19,6 +19,14 @@ type Trace struct {
 	Path string
 }
 
+// TraceID отдаёт стабильный идентификатор текущей трассы для lifecycle hooks.
+func (t *Trace) TraceID() string {
+	if t == nil {
+		return ""
+	}
+	return t.ID
+}
+
 // New создаёт trace-файл и сразу пишет session_start.
 func New(cfg *config.Config, kind string) (*Trace, error) {
 	if err := cfg.EnsureDirs(); err != nil {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/subagents"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/builtin"
@@ -18,6 +19,7 @@ func runSubagent(
 	parentTrace *trace.Trace,
 	subagent subagents.Subagent,
 	args map[string]any,
+	parentHooks *hooks.Manager,
 ) tools.Observation {
 	task := strings.TrimSpace(tools.StringArg(args, "task", ""))
 	if task == "" {
@@ -33,6 +35,14 @@ func runSubagent(
 		return tools.Fail("delegate_task", err.Error(), map[string]any{"subagent": subagent.Name})
 	}
 	tracePath := subagents.TracePathForObservation(subTrace.Path, cfg.CWD)
+	subHooks := parentHooks.WithTrace(subTrace)
+	if subHooks != nil {
+		subHooks.Emit("session_start", "subagent", map[string]any{
+			"subagent":        subagent.Name,
+			"task_preview":    truncateForHook(task, 1000),
+			"parent_trace_id": parentTrace.ID,
+		})
+	}
 	_ = parentTrace.Write("subagent_started", map[string]any{
 		"name":       subagent.Name,
 		"profile":    effectiveProfile(subagent, requestedProfile),
@@ -40,7 +50,7 @@ func runSubagent(
 		"trace_path": tracePath,
 	})
 
-	result, err := runSubagentLoop(cfg, client, subTrace, subagent, args, task, allowedTools)
+	result, err := runSubagentLoop(cfg, client, subTrace, subagent, args, task, allowedTools, subHooks)
 	if err != nil {
 		_ = parentTrace.Write("subagent_failed", map[string]any{
 			"name":       subagent.Name,
@@ -48,6 +58,7 @@ func runSubagent(
 			"trace_path": tracePath,
 			"error":      err.Error(),
 		})
+		emitSessionError(subHooks, "subagent", err, nil)
 		return tools.Fail("delegate_task", "subagent failed: "+err.Error(), map[string]any{
 			"subagent":            subagent.Name,
 			"subagent_trace_id":   subTrace.ID,
@@ -95,6 +106,7 @@ func runSubagentLoop(
 	args map[string]any,
 	task string,
 	allowedTools []string,
+	hookManager *hooks.Manager,
 ) (loopResult, error) {
 	contextMaxTokens := subagent.ContextMaxTokens
 	if contextMaxTokens == 0 {
@@ -136,7 +148,11 @@ func runSubagentLoop(
 	if maxTurns == 0 {
 		maxTurns = cfg.Data.SubagentMaxTurns
 	}
-	return runModelLoop(client, tr, context, registry, maxTurns, loopOptions{StopOnUserInput: true})
+	return runModelLoop(client, tr, context, registry, maxTurns, loopOptions{
+		StopOnUserInput: true,
+		Hooks:           hookManager,
+		Kind:            "subagent",
+	})
 }
 
 func renderSubagentPrompt(subagent subagents.Subagent, allowedTools []string) string {

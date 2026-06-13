@@ -11,10 +11,11 @@
 | `internal/skills` | Ищет skills, строит catalog, активирует `SKILL.md` и описывает resources. |
 | `internal/mcp` | Реализует stdio MCP client, JSON-RPC, config loader, provider и result adapter. |
 | `internal/subagents` | Загружает роли, вычисляет режим оркестрации, описывает tools субагентов и сводит дочерние traces. |
-| `internal/agent` | Собирает запуск: trace, model client, skills, subagents, MCP, context и registry. |
+| `internal/hooks` | Читает hooks config, запускает command handlers, делает redaction и пишет hook events в trace. |
+| `internal/agent` | Собирает запуск: trace, hooks, model client, skills, subagents, MCP, context и registry. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
 | `internal/tools` | Описывает встроенные инструменты и общий `Registry`. |
-| `internal/policy` | Проверяет workspace-границы, защищённые пути и shell-команды. |
+| `internal/policy` | Проверяет workspace-границы, protected paths и shell-команды. |
 | `internal/prompt` | Загружает встроенный системный prompt через `embed`. |
 | `internal/instructions` | Загружает корневой `AGENTS.md` с лимитом размера. |
 | `internal/trace` | Пишет JSONL-трассу и краткую сводку. |
@@ -22,39 +23,40 @@
 ## Поток `run`
 
 1. `internal/cli` создаёт `config.Config`.
-2. `agent.RunWithOptions()` создаёт parent `Trace`, model client, discovery skills
-   и discovery субагентов.
-3. `subagents.ResolveOrchestrationMode()` вычисляет режим: `off`, `requested`,
-   `auto` или `required`.
-4. Skill catalog или явно выбранный skill добавляется в context.
-5. `agentcontext.BaseContext()` добавляет встроенный prompt и корневой
-   `AGENTS.md`.
-6. `tools.Registry` получает встроенные tools, `activate_skill`, `delegate_task`
-   при разрешённой оркестрации и MCP tools из `mcp.json`.
-7. Parent model loop работает как обычно.
-8. При `delegate_task` запускается дочерний loop с отдельным context, role
-   prompt, allow-list tools и локальным trace.
-9. Результат субагента возвращается parent как observation.
-10. Если субагент вызвал `ask_user`, основной `run` печатает вопрос и
-    завершается.
+2. `agent.RunWithOptions()` создаёт parent `Trace` и `hooks.Manager`.
+3. Hooks получают `session_start`.
+4. Загружаются skills, subagents и MCP providers.
+5. `agentcontext.BaseContext()` добавляет встроенный prompt, корневой
+   `AGENTS.md`, catalog skills и историю.
+6. Перед model call вызывается `before_model_call`, после ответа -
+   `after_model_call`.
+7. Если модель вызывает tool, `runModelLoop()` вызывает `before_tool_call`.
+8. Если hook блокирует действие, handler не запускается, а модель получает
+   fail-observation.
+9. Если блокировки нет, `tools.Registry` выполняет handler.
+10. После observation вызывается `after_tool_call`.
+11. При нормальном завершении hooks получают `session_end`, при ошибке -
+    `session_error`.
 
-## Границы субагентов
+## Границы hooks
+
+Hook-команда - доверенный локальный код проекта, но harness удерживает несколько
+границ: запуск без shell, workspace-relative `cwd`, безопасное окружение,
+redaction payload и запись ошибок в trace. Hooks добавляют проектную политику,
+но не отменяют `Policy.SafePath()` и shell-проверки.
+
+## Субагенты
 
 Субагент не наследует полную историю parent. Он получает задачу делегации,
 краткий parent context, свой markdown prompt и только разрешённые tools.
 
-Встроенный `planner` дополнительно ограничен `.md` файлами, чтобы планирование
-не превращалось в реализацию. Субагент не получает `delegate_task`, иначе
-оркестрация могла бы стать рекурсивной и плохо наблюдаемой.
-
-## MCP и субагенты
-
-MCP остаётся источником инструментов для parent agent, как в ветке `05-mcp`.
-Субагенты в базовой ветке получают встроенные tools и `ask_user`, но не запускают
-отдельный MCP provider. Это держит дочерний запуск компактным и предсказуемым.
+При `delegate_task` дочерний запуск получает тот же набор hook providers, но с
+дочерней трассой. Поэтому `match: { "kind": "subagent" }` позволяет писать
+правила только для субагентов.
 
 ## Тестовое покрытие
 
-Основные сценарии покрывают loader субагентов, CLI `subagents`, режимы
-оркестрации, делегацию, role tools, `ask_user`, planner write-scope и дочерние
-traces.
+Основные hook-сценарии покрывают `internal/hooks` и `internal/agent`: no-op без
+конфига, валидацию `hooks.json`, redaction, безопасное окружение, блокировку
+`before_tool_call`, падение hook-процесса и дочерний trace субагента. Остальные
+тесты покрывают context, skills, MCP, subagents, policy и базовые tools.

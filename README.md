@@ -1,21 +1,21 @@
 # madharness-mini-go
 
-> Учебная ветка: `06-subagents`
+> Учебная ветка: `07-hooks`
 >
-> Тема главы: markdown-субагенты, роли и оркестрация внутри одного harness.
+> Тема главы: lifecycle hooks как проектный слой аудита и блокировки действий
+> агента.
 >
-> В этой точке parent agent может получить инструмент `delegate_task`, запускать
-> встроенных или project-local субагентов, передавать им ограниченный набор
-> tools и получать отдельные дочерние trace-файлы.
+> В этой точке harness умеет читать `.madharness-mini/hooks.json`, отправлять
+> JSON-события локальным command hooks, писать hook-аудит в trace и блокировать
+> `before_tool_call` до запуска handler-а.
 >
 > Лабораторные работы: [LABS.md](LABS.md)
-> Предыдущая ветка: `05-mcp`
-> Следующая ветка: `07-hooks`
+> Предыдущая ветка: `06-subagents`
 
 `madharness-mini-go` - учебный минималистичный harness для работы кодирующего
-ИИ-агента с локальным программным продуктом. Этот Go-порт показывает, как один
-agent loop можно превратить в маленькую оркестрацию ролей, не добавляя внешних
-runtime-зависимостей.
+ИИ-агента с локальным программным продуктом. Эта ветка показывает полный набор
+механизмов Go-порта: workspace tools, проектные инструкции, context layer,
+Agent Skills, MCP, субагентов и hooks.
 
 Проект написан для Go 1.25 и использует только стандартную библиотеку. Внутри
 используется OpenAI-совместимый API `/chat/completions`, поэтому можно
@@ -29,14 +29,10 @@ runtime-зависимостей.
 - слой контекста с бюджетом и `context_report`;
 - project-local Agent Skills и `activate_skill`;
 - stdio MCP tools через `.madharness-mini/mcp.json`;
-- встроенные роли `researcher`, `planner`, `implementer`, `reviewer`;
-- project-local субагенты в `.madharness-mini/subagents/<name>.md`;
-- режимы оркестрации `off`, `requested`, `auto`, `required`;
-- инструменты `delegate_task` и, для разрешённых ролей, `ask_user`;
-- отдельные дочерние traces для запусков субагентов.
-
-В этой ветке ещё нет hooks. Здесь важны роли, profiles, allow-list tools и
-передача результата обратно parent agent.
+- markdown-субагенты, `delegate_task`, `ask_user` и дочерние traces;
+- lifecycle hooks из `.madharness-mini/hooks.json`;
+- redaction payload перед передачей hook-команде;
+- блокировка tool call через `before_tool_call`.
 
 ## Быстрый запуск
 
@@ -61,52 +57,41 @@ go run ./cmd/madharness-mini init \
 go run ./cmd/madharness-mini init --no-prompt
 ```
 
-## Оркестрация
-
-По умолчанию используется режим `auto`: parent agent видит `delegate_task`, но
-может решить небольшую задачу сам.
-
-Для одного запуска режим можно выбрать флагом:
+Запустите агентский режим:
 
 ```bash
-go run ./cmd/madharness-mini run --no-orchestrate "Обнови короткий текст"
-go run ./cmd/madharness-mini run --orchestration requested "Используй субагентов для ревью"
-go run ./cmd/madharness-mini run --orchestrate-required "Разбей задачу между ролями"
+go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
 ```
 
-В `.env` тот же выбор задаётся так:
+## Минимальный hook
 
-```text
-MADHARNESS_MINI_ORCHESTRATION_MODE=requested
+Создайте `.madharness-mini/hooks.json`:
+
+```json
+{
+  "hooks": [
+    {
+      "id": "deny-shell",
+      "event": "before_tool_call",
+      "match": { "tool": "run_shell" },
+      "command": "python3",
+      "args": ["scripts/hooks/deny_shell.py"],
+      "cwd": ".",
+      "timeout_seconds": 3
+    }
+  ]
+}
 ```
 
-Проверить встроенные и project-local роли:
+Hook-команда получает событие в stdin. Если она печатает:
 
-```bash
-go run ./cmd/madharness-mini subagents list
-go run ./cmd/madharness-mini subagents validate
+```json
+{ "ok": false, "block": "shell запрещён правилами проекта" }
 ```
 
-## Project-local субагент
-
-Создайте `.madharness-mini/subagents/test-writer.md`:
-
-```md
----
-name: test-writer
-description: Пишет минимальные Go-тесты для изменённого кода.
-profile: writable
-tools: ["list_files", "read_file", "search_code", "apply_patch", "write_file", "run_shell", "ask_user"]
-max_turns: 10
----
-
-Ты субагент test-writer.
-Пиши маленькие тесты рядом с существующими Go-тестами.
-Если не хватает требований, задай один короткий вопрос через ask_user.
-```
-
-`profile` не выдаёт полномочия сам по себе. Фактический набор доступных tools
-задаётся списком `tools`.
+handler инструмента не запускается, а модель получает обычное fail-observation.
+Остальные события нужны для аудита и диагностики; сейчас блокировать действие
+может только `before_tool_call`.
 
 ## Документация ветки
 
@@ -116,6 +101,7 @@ max_turns: 10
 - [Agent Skills](docs/agent-skills.md)
 - [MCP](docs/mcp.md)
 - [Субагенты](docs/subagents.md)
+- [Hooks](docs/hooks.md)
 - [Инструмент apply_patch](docs/apply-patch.md)
 
 ## Разработка самого проекта
@@ -130,14 +116,16 @@ go test ./...
 Быстрая ручная проверка CLI:
 
 ```bash
-go run ./cmd/madharness-mini subagents list
-go run ./cmd/madharness-mini subagents validate
+go run ./cmd/madharness-mini run "Объясни, какие hooks подключены в этом проекте"
+go run ./cmd/madharness-mini trace <trace-id>
 ```
 
-## Что дальше
+## Как читать эту ветку
 
-Следующая ветка `07-hooks` добавляет lifecycle hooks: локальные команды проекта
-смогут наблюдать события harness и блокировать tool call до выполнения.
+Это самая полная учебная точка Go-порта. Если вы пришли из книги или курса,
+сначала посмотрите [LABS.md](LABS.md), затем откройте
+[docs/README.md](docs/README.md) и переходите в конкретный документ по
+механизму, который сейчас изучаете.
 
 ## Лицензирование
 

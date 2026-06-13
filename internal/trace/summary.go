@@ -51,6 +51,10 @@ func summarizePath(path string) (string, error) {
 	mcpErrors := 0
 	subagentEvents := 0
 	subagentNames := map[string]bool{}
+	hookStarted := 0
+	hookFinished := 0
+	hookBlocked := 0
+	hookFailed := 0
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -85,6 +89,16 @@ func summarizePath(path string) (string, error) {
 			if subagentName != "" && subagentName != "<nil>" {
 				subagentNames[subagentName] = true
 			}
+		}
+		switch event["event"] {
+		case "hook_started":
+			hookStarted++
+		case "hook_finished":
+			hookFinished++
+		case "hook_blocked":
+			hookBlocked++
+		case "hook_failed":
+			hookFailed++
 		}
 		if report, ok := event["context_report"].(map[string]any); ok {
 			contextReport = report
@@ -146,6 +160,15 @@ func summarizePath(path string) (string, error) {
 			namesText = strings.Join(names, ", ")
 		}
 		lines = append(lines, fmt.Sprintf("subagents: events %d; names %s", subagentEvents, namesText))
+	}
+	if hookStarted > 0 || hookFinished > 0 || hookBlocked > 0 || hookFailed > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"hooks: started %d; finished %d; blocked %d; failed %d",
+			hookStarted,
+			hookFinished,
+			hookBlocked,
+			hookFailed,
+		))
 	}
 	lines = append(lines, fmt.Sprintf("result: %s", result))
 	return strings.Join(lines, "\n"), nil
