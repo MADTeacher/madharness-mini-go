@@ -121,6 +121,55 @@ func TestRunShellTool(t *testing.T) {
 	}
 }
 
+func TestRunShellAcceptsWorkspaceRelativeCWD(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	if err := os.Mkdir(filepath.Join(cfg.Root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	obs := registry.Call("run_shell", map[string]any{"command": "pwd", "cwd": "sub"})
+
+	if obs["ok"] != true || obs["cwd"] != "sub" || obs["returncode"].(int) != 0 {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
+func TestRunShellRejectsInvalidCWD(t *testing.T) {
+	obs := testRegistry(t).Call("run_shell", map[string]any{"command": "pwd", "cwd": "../outside"})
+	if obs["ok"] != false {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
+func TestToolsEmitSkillResourceEvents(t *testing.T) {
+	cfg := testConfigForRegistry(t)
+	if err := os.MkdirAll(filepath.Join(cfg.Root, "skill", "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.Root, "skill", "data.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trace := &fakeTrace{}
+	tracker := fakeResourceTracker{root: filepath.Join(cfg.Root, "skill")}
+	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
+		Trace:           trace,
+		ResourceTracker: tracker,
+	}, builtin.Provider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readObs := registry.Call("read_file", map[string]any{"path": "skill/data.txt"})
+	shellObs := registry.Call("run_shell", map[string]any{"command": "pwd", "cwd": "skill"})
+
+	if readObs["ok"] != true || shellObs["ok"] != true {
+		t.Fatalf("read=%+v shell=%+v", readObs, shellObs)
+	}
+	if trace.count("skill_resource_used") != 2 {
+		t.Fatalf("events = %+v", trace.events)
+	}
+}
+
 func testRegistry(t *testing.T) *tools.Registry {
 	t.Helper()
 	_, registry := testRegistryWithConfig(t)
@@ -144,6 +193,59 @@ func testRegistryWithConfig(t *testing.T) (*config.Config, *tools.Registry) {
 		t.Fatal(err)
 	}
 	return cfg, registry
+}
+
+func testConfigForRegistry(t *testing.T) *config.Config {
+	t.Helper()
+	t.Setenv("MADHARNESS_MINI_MODEL", "")
+	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
+	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
+	t.Setenv("MADHARNESS_MINI_MAX_IMAGE_BYTES", "")
+	t.Setenv("MADHARNESS_MINI_IMAGE_DETAIL", "")
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+type fakeTrace struct {
+	events []map[string]any
+}
+
+func (f *fakeTrace) Write(event string, fields map[string]any) error {
+	record := map[string]any{"event": event}
+	for key, value := range fields {
+		record[key] = value
+	}
+	f.events = append(f.events, record)
+	return nil
+}
+
+func (f *fakeTrace) count(event string) int {
+	total := 0
+	for _, item := range f.events {
+		if item["event"] == event {
+			total++
+		}
+	}
+	return total
+}
+
+type fakeResourceTracker struct {
+	root string
+}
+
+func (f fakeResourceTracker) ResourceEvent(path string) map[string]any {
+	rel, err := filepath.Rel(f.root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	if rel == "." {
+		rel = "."
+	}
+	return map[string]any{"name": "test-skill", "path": filepath.ToSlash(rel), "skill_root": "skill"}
 }
 
 func contains(items []string, needle string) bool {

@@ -54,6 +54,7 @@ func runModelLoop(
 		}
 		for _, call := range calls {
 			name, args, obs, followups, callMap := executeToolCall(registry, call)
+			applyHiddenObservationEffects(context, tr, obs)
 			_ = tr.Write("tool_observation", map[string]any{
 				"tool":        name,
 				"args":        args,
@@ -96,6 +97,32 @@ func executeToolCall(registry *tools.Registry, call any) (string, map[string]any
 	}
 	obs, followups := registry.CallWithFollowups(name, args)
 	return name, args, obs, followups, callMap
+}
+
+func applyHiddenObservationEffects(context *agentcontext.Manager, tr *trace.Trace, observation tools.Observation) {
+	rawFragments, hasFragments := observation["_context_fragments"]
+	if hasFragments {
+		delete(observation, "_context_fragments")
+	}
+	switch fragments := rawFragments.(type) {
+	case []agentcontext.Fragment:
+		for _, fragment := range fragments {
+			context.AddFragment(fragment)
+		}
+	case []any:
+		for _, raw := range fragments {
+			if fragment, ok := raw.(agentcontext.Fragment); ok {
+				context.AddFragment(fragment)
+			}
+		}
+	}
+	rawEvent, hasEvent := observation["_skill_event"]
+	if hasEvent {
+		delete(observation, "_skill_event")
+	}
+	if event, ok := rawEvent.(map[string]any); ok {
+		_ = tr.Write("skill_activated", event)
+	}
 }
 
 func safeContextReport(context *agentcontext.Manager) (report map[string]any) {

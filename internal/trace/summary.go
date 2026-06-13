@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
@@ -32,6 +33,9 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	toolCalls := 0
 	result := ""
 	var contextReport map[string]any
+	var discovered map[string]any
+	activated := map[string]bool{}
+	resourcesUsed := 0
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -41,6 +45,15 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	for _, event := range events {
 		if event["event"] == "tool_observation" {
 			toolCalls++
+		}
+		if event["event"] == "skills_discovered" {
+			discovered = event
+		}
+		if event["event"] == "skill_activated" {
+			activated[fmt.Sprint(event["name"])] = true
+		}
+		if event["event"] == "skill_resource_used" {
+			resourcesUsed++
 		}
 		if report, ok := event["context_report"].(map[string]any); ok {
 			contextReport = report
@@ -54,6 +67,25 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 	}
 	if contextReport != nil {
 		lines = append(lines, summarizeContextReport(contextReport))
+	}
+	if discovered != nil || len(activated) > 0 || resourcesUsed > 0 {
+		names := make([]string, 0, len(activated))
+		for name := range activated {
+			if name != "" && name != "<nil>" {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		activatedText := "none"
+		if len(names) > 0 {
+			activatedText = strings.Join(names, ", ")
+		}
+		lines = append(lines, fmt.Sprintf(
+			"skills: discovered %d; activated %s; resources used %d",
+			intFromAny(discovered["count"]),
+			activatedText,
+			resourcesUsed,
+		))
 	}
 	lines = append(lines, fmt.Sprintf("result: %s", result))
 	return strings.Join(lines, "\n"), nil

@@ -8,6 +8,10 @@ import (
 
 // Ask отправляет один запрос к модели без инструментов.
 func Ask(task string, cfg *config.Config) (string, string, error) {
+	return askWithClient(task, cfg, model.New(cfg))
+}
+
+func askWithClient(task string, cfg *config.Config, client chatClient) (string, string, error) {
 	tr, err := trace.New(cfg, "ask")
 	if err != nil {
 		return "", "", err
@@ -29,7 +33,7 @@ func Ask(task string, cfg *config.Config) (string, string, error) {
 		"tools_count":    0,
 		"context_report": context.Report(),
 	})
-	raw, err := callModelWithRateLimitRetry(model.New(cfg), tr, messages, nil, nil)
+	raw, err := callModelWithRateLimitRetry(client, tr, messages, nil, nil)
 	if err != nil {
 		_ = tr.Write("model_error", map[string]any{"error": err.Error()})
 		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})

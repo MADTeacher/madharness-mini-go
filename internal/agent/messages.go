@@ -9,8 +9,8 @@ import (
 )
 
 // BaseContext собирает стартовый слой контекста: system prompt, AGENTS.md и задачу.
-func BaseContext(cfg *config.Config, task string) (*agentcontext.Manager, error) {
-	return agentcontext.BaseContext(cfg, task)
+func BaseContext(cfg *config.Config, task string, providers ...agentcontext.Provider) (*agentcontext.Manager, error) {
+	return agentcontext.BaseContext(cfg, task, providers...)
 }
 
 // BaseMessages сохраняет старый контракт тестов и внешних учебных патчей.

@@ -14,9 +14,25 @@ type Registry struct {
 	tools map[string]Spec
 }
 
+// RegistryOptions передаёт handlers наблюдаемость текущего run.
+type RegistryOptions struct {
+	Trace           TraceWriter
+	ResourceTracker ResourceTracker
+}
+
 // NewRegistry собирает tools от providers и проверяет дубликаты имён.
 func NewRegistry(cfg *config.Config, providers ...Provider) (*Registry, error) {
-	ctx := &Context{Config: cfg, Policy: policy.New(cfg)}
+	return NewRegistryWithOptions(cfg, RegistryOptions{}, providers...)
+}
+
+// NewRegistryWithOptions собирает registry с trace и skill runtime для handlers.
+func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, providers ...Provider) (*Registry, error) {
+	ctx := &Context{
+		Config:          cfg,
+		Policy:          policy.New(cfg),
+		Trace:           options.Trace,
+		ResourceTracker: options.ResourceTracker,
+	}
 	registry := &Registry{ctx: ctx, tools: map[string]Spec{}}
 	for _, provider := range providers {
 		for _, tool := range provider.Specs(ctx) {

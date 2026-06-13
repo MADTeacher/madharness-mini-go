@@ -9,13 +9,14 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agent"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/skills"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 // Main запускает CLI и возвращает process exit code.
 func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
 	if len(argv) == 0 {
-		fmt.Fprintln(stderr, "usage: madharness-mini <init|ask|run|trace> ...")
+		fmt.Fprintln(stderr, "usage: madharness-mini <init|ask|run|trace|skills> ...")
 		return 2
 	}
 	cfg, err := config.New("")
@@ -32,6 +33,8 @@ func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
 		return runAgent(argv[1:], cfg, stdout, stderr)
 	case "trace":
 		return runTrace(argv[1:], cfg, stdout, stderr)
+	case "skills":
+		return runSkills(argv[1:], cfg, stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, "error: unknown command:", argv[0])
 		return 2
@@ -105,6 +108,107 @@ func runTrace(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Wri
 	}
 	fmt.Fprintln(stdout, result)
 	return 0
+}
+
+func runSkills(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {
+	if len(argv) < 1 {
+		fmt.Fprintln(stderr, "usage: madharness-mini skills <list|show|validate> [name]")
+		return 2
+	}
+	result, err := SkillsCommand(cfg, argv[0], argv[1:]...)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, result)
+	return 0
+}
+
+// SkillsCommand печатает найденные Agent Skills и диагностику их SKILL.md.
+func SkillsCommand(cfg *config.Config, command string, args ...string) (string, error) {
+	index := skills.Discover(cfg)
+	switch command {
+	case "list":
+		if len(index.Skills) == 0 {
+			return "Навыки не найдены.", nil
+		}
+		lines := []string{"Доступные навыки:"}
+		for _, name := range index.Names() {
+			skill := index.Skills[name]
+			lines = append(lines, fmt.Sprintf("- %s: %s (%s)", skill.Name, skill.Description, skill.Location(cfg.Root)))
+		}
+		return join(lines, "\n"), nil
+	case "show":
+		if len(args) != 1 {
+			return "", fmt.Errorf("usage: madharness-mini skills show <name>")
+		}
+		skill, ok := index.Skills[args[0]]
+		if !ok {
+			return "", fmt.Errorf("skill not found: %s", args[0])
+		}
+		return renderSkill(skill, cfg.Root), nil
+	case "validate":
+		lines := []string{fmt.Sprintf("skills: %d", len(index.Skills))}
+		for _, diagnostic := range index.Diagnostics {
+			item := diagnostic.AsMap(cfg.Root)
+			lines = append(lines, fmt.Sprintf("%s: %s: %s", item["severity"], item["path"], item["message"]))
+		}
+		errors := 0
+		for _, diagnostic := range index.Diagnostics {
+			if diagnostic.Severity == "error" {
+				errors++
+			}
+		}
+		if errors > 0 {
+			lines = append(lines, fmt.Sprintf("errors: %d", errors))
+		} else {
+			lines = append(lines, "OK")
+		}
+		return join(lines, "\n"), nil
+	default:
+		return "", fmt.Errorf("unknown skills command: %s", command)
+	}
+}
+
+func renderSkill(skill skills.Skill, root string) string {
+	lines := []string{
+		"name: " + skill.Name,
+		"description: " + skill.Description,
+		"location: " + skill.Location(root),
+		"root: " + skill.RootLocation(root),
+		"source: " + skill.Source,
+	}
+	if skill.License != "" {
+		lines = append(lines, "license: "+skill.License)
+	}
+	if skill.Compatibility != "" {
+		lines = append(lines, "compatibility: "+skill.Compatibility)
+	}
+	if len(skill.AllowedTools) > 0 {
+		lines = append(lines, "allowed-tools: "+join(skill.AllowedTools, " "))
+	}
+	if len(skill.Metadata) > 0 {
+		lines = append(lines, "metadata:")
+		keys := make([]string, 0, len(skill.Metadata))
+		for key := range skill.Metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			lines = append(lines, fmt.Sprintf("  %s: %s", key, skill.Metadata[key]))
+		}
+	}
+	lines = append(lines, "resources:")
+	resources := skills.ListResources(skill, root)
+	if len(resources) == 0 {
+		lines = append(lines, "  none")
+	} else {
+		for _, resource := range resources {
+			lines = append(lines, fmt.Sprintf("  - %s (%s, %d bytes)", resource.WorkspacePath, resource.Kind, resource.Bytes))
+		}
+	}
+	lines = append(lines, "", "instructions:", skill.Body)
+	return join(lines, "\n")
 }
 
 func oneTask(argv []string, stderr io.Writer) (string, bool) {

@@ -1,22 +1,22 @@
 # madharness-mini-go
 
-> Учебная ветка: `03-Context-Layer`
+> Учебная ветка: `04-Agents-Skills`
 >
-> Тема главы: слой контекста между задачей пользователя, проектными
-> инструкциями, историей вызовов инструментов и запросом к модели.
+> Тема главы: project-local Agent Skills как управляемый способ добавлять
+> агенту workflow-инструкции и ресурсы.
 >
-> В этой точке Go harness уже отделяет сборку `messages` от основного
-> model/tool loop, считает примерный бюджет контекста и пишет `context_report`
-> в trace.
+> В этой точке Go harness умеет искать `SKILL.md`, показывать каталог навыков
+> модели, активировать skill через `activate_skill` и добавлять инструкции
+> навыка в durable context.
 >
 > Лабораторные работы: [LABS.md](LABS.md)
-> Предыдущая ветка: `02-AGENTS-md`
-> Следующая ветка: `04-Agents-Skills`
+> Предыдущая ветка: `03-Context-Layer`
+> Следующая ветка: `05-mcp`
 
 `madharness-mini-go` — учебный минималистичный harness для работы кодирующего
 ИИ-агента с локальным программным продуктом. Он даёт модели понятный цикл:
-получить задачу, увидеть системные и проектные инструкции, вызвать инструмент,
-получить ответ инструмента и продолжить работу в рамках управляемого контекста.
+получить задачу, увидеть контекст проекта, выбрать подходящий skill, вызвать
+инструменты и записать ход выполнения в trace.
 
 Проект написан для Go 1.25 и использует только стандартную библиотеку. Внутри
 используется OpenAI-совместимый API `/chat/completions`, поэтому можно
@@ -25,20 +25,19 @@
 
 ## Что есть в этой ветке
 
-- команды `init`, `ask`, `run` и `trace`;
-- проектные инструкции `AGENTS.md` из корня workspace;
+- команды `init`, `ask`, `run`, `trace` и `skills`;
+- проектные инструкции `AGENTS.md`;
+- слой контекста с бюджетом и `context_report`;
 - инструмент `read_image` для моделей с vision input;
 - базовые инструменты workspace: `list_files`, `read_file`, `write_file`,
   `search_code`, `apply_patch`, `run_shell`;
-- пакет `internal/agentcontext` с `Manager`, `Fragment` и `Provider`;
-- бюджет контекста через `context_max_tokens` и `context_keep_recent_turns`;
-- `context_report` в trace перед каждым обращением к модели;
-- общий model/tool loop, который отделяет цикл вызовов модели от публичных
-  режимов `ask` и `run`.
+- discovery project-local skills в `.madharness_mini/skills` и `.agents/skills`;
+- явная активация через `@skill:name`, `@skill/name`, `$name` и похожие фразы;
+- auto-activation через catalog и инструмент `activate_skill`;
+- CLI-диагностика `skills list`, `skills show`, `skills validate`.
 
-В этой ветке ещё нет Agent Skills, MCP, субагентов и hooks. Здесь важно понять
-саму механику контекста, потому что следующие ветки будут добавлять новые
-источники инструкций и инструментов.
+В этой ветке ещё нет MCP, субагентов и hooks. Здесь фокус только на skills как
+локальном расширении контекста и workflow-памяти агента.
 
 ## Быстрый запуск
 
@@ -57,45 +56,47 @@ go run ./cmd/madharness-mini init \
   --api-key "ключ-доступа-openrouter"
 ```
 
-Команда создаёт `.madharness-mini/config.json`. В этой ветке особенно важны
-поля `context_max_tokens` и `context_keep_recent_turns`: они управляют
-приблизительным бюджетом запроса к модели.
-
 Если ключ уже лежит в `.env`, достаточно:
 
 ```bash
 go run ./cmd/madharness-mini init --no-prompt
 ```
 
-## Первые команды
+## Минимальный skill
 
-Задать вопрос без доступа к инструментам:
+Создайте файл `.madharness_mini/skills/docs-writer/SKILL.md`:
 
-```bash
-go run ./cmd/madharness-mini ask "Объясни, что делает этот проект"
+```md
+---
+name: docs-writer
+description: Помогает обновлять README и учебную документацию проекта.
+---
+
+Перед правкой документации прочитай README, docs/README.md и связанные файлы.
+Сохраняй короткий учебный стиль и не добавляй возможности, которых нет в коде.
 ```
 
-Запустить агентский режим:
+Проверьте, что harness видит skill:
 
 ```bash
-go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
+go run ./cmd/madharness-mini skills list
 ```
 
-Посмотреть краткую сводку trace:
+Запустите задачу с явным skill:
 
 ```bash
-go run ./cmd/madharness-mini trace 20260529-171000
+go run ./cmd/madharness-mini run "@skill:docs-writer обнови README"
 ```
 
-В trace этой ветки у событий `model_call_started` есть `context_report`. Он
-показывает примерный размер `messages`, схем инструментов, список фрагментов и
-факт обрезки истории или ответов инструментов.
+Если skill не выбран явно, в `run` модель увидит компактный catalog и сможет
+сама вызвать `activate_skill`.
 
 ## Документация ветки
 
 - [Возможности ветки](docs/capabilities.md)
 - [Структура кода](docs/code-overview.md)
 - [Слой контекста](docs/context-layer.md)
+- [Agent Skills](docs/agent-skills.md)
 - [Инструмент apply_patch](docs/apply-patch.md)
 
 ## Разработка самого проекта
@@ -110,14 +111,13 @@ go test ./...
 Быстрая ручная проверка CLI:
 
 ```bash
-go run ./cmd/madharness-mini ask "Объясни, что делает этот проект"
+go run ./cmd/madharness-mini skills validate
 ```
 
 ## Что дальше
 
-Следующая ветка `04-Agents-Skills` использует слой контекста, чтобы подключать
-project-local `SKILL.md` как отдельные инструкции, а не как часть монолитного
-system prompt.
+Следующая ветка `05-mcp` добавляет подключение внешних инструментов через
+минимальный stdio MCP-клиент.
 
 ## Лицензирование
 

@@ -17,6 +17,15 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	if err := tr.Write("tool_observation", map[string]any{"tool": "list_files"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := tr.Write("skills_discovered", map[string]any{"count": 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Write("skill_activated", map[string]any{"name": "docs-writer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.Write("skill_resource_used", map[string]any{"name": "docs-writer", "path": "references/style.md"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := tr.Write("model_call_started", map[string]any{"context_report": map[string]any{
 		"request_tokens_estimate": 120,
 		"max_tokens":              60000,
@@ -43,6 +52,9 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	}
 	if !strings.Contains(summary, "context: 120/60000 estimated tokens") ||
 		!strings.Contains(summary, "clipped tool messages: 1") {
+		t.Fatalf("summary = %s", summary)
+	}
+	if !strings.Contains(summary, "skills: discovered 2; activated docs-writer; resources used 1") {
 		t.Fatalf("summary = %s", summary)
 	}
 }

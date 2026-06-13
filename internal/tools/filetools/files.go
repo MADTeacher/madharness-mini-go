@@ -88,6 +88,11 @@ func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	if err != nil || info.IsDir() {
 		return tools.Fail("read_file", "not a file: "+rawPath)
 	}
+	if ctx.Trace != nil && ctx.ResourceTracker != nil {
+		if event := ctx.ResourceTracker.ResourceEvent(path); event != nil {
+			_ = ctx.Trace.Write("skill_resource_used", mergeEvent(event, map[string]any{"tool": "read_file"}))
+		}
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return tools.Fail("read_file", err.Error())
@@ -123,4 +128,15 @@ func writeFile(ctx *tools.Context, args map[string]any) tools.Observation {
 		return tools.Fail("write_file", err.Error())
 	}
 	return tools.OK("write_file", "wrote "+rawPath, map[string]any{"bytes": len([]byte(content))})
+}
+
+func mergeEvent(base map[string]any, extra map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for key, value := range extra {
+		out[key] = value
+	}
+	return out
 }

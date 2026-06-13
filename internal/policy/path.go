@@ -41,6 +41,27 @@ func (p *Policy) SafePath(raw string) (string, error) {
 	return path, nil
 }
 
+// SkillRoot проверяет фиксированный каталог skills внутри workspace.
+//
+// Discovery читает только заранее известные skill roots. Они не проходят через
+// protected_paths как пользовательские файловые инструменты, но всё равно не
+// могут выходить за workspace.
+func (p *Policy) SkillRoot(raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("empty skill root")
+	}
+	path := raw
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(p.root, raw)
+	}
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(p.root, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("skill root outside workspace: %s", raw)
+	}
+	return path, nil
+}
+
 func (p *Policy) isProtected(path string, rel string) bool {
 	parts := strings.Split(rel, string(filepath.Separator))
 	for _, item := range p.protected {
