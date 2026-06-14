@@ -3,6 +3,7 @@ package tools
 import (
 	"strings"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 )
@@ -11,6 +12,7 @@ import (
 type Context struct {
 	Config                *config.Config
 	Policy                *policy.Policy
+	Approval              *approval.Manager
 	Trace                 TraceWriter
 	ResourceTracker       ResourceTracker
 	WritableSuffixes      []string

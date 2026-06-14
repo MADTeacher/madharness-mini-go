@@ -55,6 +55,9 @@ func summarizePath(path string) (string, error) {
 	hookFinished := 0
 	hookBlocked := 0
 	hookFailed := 0
+	approvalRequests := 0
+	approvalApproved := 0
+	approvalDenied := 0
 	concurrency := collectConcurrencySummary(events)
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
@@ -100,6 +103,14 @@ func summarizePath(path string) (string, error) {
 			hookBlocked++
 		case "hook_failed":
 			hookFailed++
+		case "approval_request":
+			approvalRequests++
+		case "approval_decision":
+			if event["approved"] == true {
+				approvalApproved++
+			} else {
+				approvalDenied++
+			}
 		}
 		if report, ok := event["context_report"].(map[string]any); ok {
 			contextReport = report
@@ -169,6 +180,14 @@ func summarizePath(path string) (string, error) {
 			hookFinished,
 			hookBlocked,
 			hookFailed,
+		))
+	}
+	if approvalRequests > 0 || approvalApproved > 0 || approvalDenied > 0 {
+		lines = append(lines, fmt.Sprintf(
+			"approvals: requested %d; approved %d; denied %d",
+			approvalRequests,
+			approvalApproved,
+			approvalDenied,
 		))
 	}
 	if concurrency.HasPlans {

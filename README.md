@@ -45,6 +45,18 @@ go run ./cmd/madharness-mini run "Найди команду для запуск�
 go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "Найди документацию про конкурентность"
 ```
 
+Для явного подтверждения эскалируемого policy-отказа в CLI:
+
+```bash
+go run ./cmd/madharness-mini run --approval ask "Запусти нужную проверку"
+```
+
+YOLO-режим автоматически подтверждает такие отказы внутри workspace:
+
+```bash
+go run ./cmd/madharness-mini run --yolo "Проверь проект максимально свободно"
+```
+
 Посмотрите трассу:
 
 ```bash

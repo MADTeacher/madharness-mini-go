@@ -11,7 +11,7 @@ import (
 
 func readImage(ctx *tools.Context, args map[string]any) tools.Observation {
 	rawPath := tools.StringArg(args, "path", "")
-	path, err := ctx.Policy.SafePath(rawPath)
+	path, err := ctx.SafePathForTool("read_image", rawPath, "read_path")
 	if err != nil {
 		return tools.Fail("read_image", err.Error())
 	}

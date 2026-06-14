@@ -13,6 +13,7 @@
 | `internal/subagents` | Загружает роли, вычисляет режим оркестрации, описывает tools субагентов и сводит дочерние traces. |
 | `internal/events` | Публикует lifecycle-события подписчикам и сохраняет trace-события через trace subscriber. |
 | `internal/hooks` | Читает hooks config, запускает enforce/observe command handlers, делает redaction и пишет hook events в trace. |
+| `internal/approval` | Обрабатывает эскалируемые policy-отказы через hooks, YOLO, CLI prompt или config-deny. |
 | `internal/agent` | Собирает запуск: trace, hooks, model client, skills, subagents, MCP, context и registry. |
 | `internal/agent/turnexec` | Планирует read-only tool batches и выполняет их конкурентно внутри одного turn-а. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
@@ -37,13 +38,16 @@
    разных подписчиков.
 7. Если модель вызывает tools, `runModelLoop()` синхронно публикует
    `before_tool_call` для каждого call.
-8. Если enforce hook блокирует действие, handler не запускается, а модель
-   получает fail-observation. Observe hooks не блокируют.
+8. Если enforce hook блокирует `before_tool_call`, handler не запускается, а
+   модель получает fail-observation. Observe hooks не блокируют.
 9. Если блокировки нет, `turnexec` параллелит только соседние read-only tools,
    а write/shell/state/delegate/MCP calls оставляет барьерами.
-10. После observation вызывается `after_tool_call`, а commit в context идёт в
+10. Если tool упёрся в эскалируемый policy-отказ, `internal/approval`
+    публикует `approval_request` и `approval_decision`; `approval_request`
+    может быть заблокирован enforce hook-ом до CLI prompt.
+11. После observation вызывается `after_tool_call`, а commit в context идёт в
     исходном порядке `tool_calls`.
-11. При нормальном завершении hooks получают `session_end`, при ошибке -
+12. При нормальном завершении hooks получают `session_end`, при ошибке -
     `session_error`.
 
 ## Границы hooks

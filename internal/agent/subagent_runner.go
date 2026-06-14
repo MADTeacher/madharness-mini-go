@@ -20,6 +20,7 @@ func runSubagent(
 	subagent subagents.Subagent,
 	args map[string]any,
 	parentEvents *events.Bus,
+	options RunOptions,
 ) tools.Observation {
 	task := strings.TrimSpace(tools.StringArg(args, "task", ""))
 	if task == "" {
@@ -48,7 +49,7 @@ func runSubagent(
 		"trace_path": tracePath,
 	})
 
-	result, err := runSubagentLoop(cfg, client, subTrace, subagent, args, task, allowedTools, subEvents)
+	result, err := runSubagentLoop(cfg, client, subTrace, subagent, args, task, allowedTools, subEvents, options)
 	if err != nil {
 		_ = parentTrace.Write("subagent_failed", map[string]any{
 			"name":       subagent.Name,
@@ -107,6 +108,7 @@ func runSubagentLoop(
 	task string,
 	allowedTools []string,
 	eventBus *events.Bus,
+	options RunOptions,
 ) (loopResult, error) {
 	contextMaxTokens := subagent.ContextMaxTokens
 	if contextMaxTokens == 0 {
@@ -135,6 +137,7 @@ func runSubagentLoop(
 		Placement: "system",
 	})
 	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
+		Approval:              approvalManagerForRun(cfg, options, eventBus, "subagent"),
 		Trace:                 tr,
 		AllowedTools:          allowedTools,
 		WritableSuffixes:      subagentWritableSuffixes(subagent),

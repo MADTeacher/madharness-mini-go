@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agent"
+	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/skills"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
@@ -15,6 +16,11 @@ import (
 
 // Main запускает CLI и возвращает process exit code.
 func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
+	return MainWithInput(argv, nil, stdout, stderr)
+}
+
+// MainWithInput запускает CLI с явным stdin для интерактивного approval prompt.
+func MainWithInput(argv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if len(argv) == 0 {
 		fmt.Fprintln(stderr, "usage: madharness-mini <init|ask|run|trace|skills|subagents> ...")
 		return 2
@@ -30,7 +36,7 @@ func Main(argv []string, stdout io.Writer, stderr io.Writer) int {
 	case "ask":
 		return runAsk(argv[1:], cfg, stdout, stderr)
 	case "run":
-		return runAgent(argv[1:], cfg, stdout, stderr)
+		return runAgent(argv[1:], cfg, stdin, stdout, stderr)
 	case "trace":
 		return runTrace(argv[1:], cfg, stdout, stderr)
 	case "skills":
@@ -83,7 +89,7 @@ func runAsk(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Write
 	return 0
 }
 
-func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {
+func runAgent(argv []string, cfg *config.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	runFlags := registerRunFlags(fs)
@@ -99,6 +105,9 @@ func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Wri
 	if !ok {
 		return 2
 	}
+	if selectedApprovalMode(cfg, options) == approval.ModeAsk {
+		options.ApprovalPrompter = approval.NewCLIPrompter(stdin, stderr)
+	}
 	result, tracePath, err := agent.RunWithOptions(task, cfg, options)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
@@ -107,6 +116,13 @@ func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Wri
 	fmt.Fprintln(stdout, result)
 	fmt.Fprintln(stderr, "\nTrace:", tracePath)
 	return 0
+}
+
+func selectedApprovalMode(cfg *config.Config, options agent.RunOptions) string {
+	if options.ApprovalMode != "" {
+		return options.ApprovalMode
+	}
+	return cfg.Data.ApprovalMode
 }
 
 func runTrace(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {

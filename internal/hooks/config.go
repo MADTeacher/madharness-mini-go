@@ -262,6 +262,8 @@ func timeoutSeconds(item map[string]any) (float64, error) {
 
 func eventNames() string {
 	names := []string{
+		"approval_decision",
+		"approval_request",
 		"after_model_call",
 		"after_tool_call",
 		"before_model_call",

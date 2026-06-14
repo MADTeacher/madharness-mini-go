@@ -53,9 +53,17 @@ JSONL event names, а hooks получают прежний JSON-контрак�
 
 Hooks разделены на `enforce` и `observe`. Старый `hooks.json` без `mode`
 остаётся `enforce`. `enforce` hooks остаются синхронными, но блокировать ход
-может только `before_tool_call`. `observe` hooks выполняются через очередь 32
-элемента и никогда не блокируют действие; при переполнении пишется
-`hook_failed`.
+могут только `before_tool_call` и `approval_request`. `observe` hooks
+выполняются через очередь 32 элемента и никогда не блокируют действие; при
+переполнении пишется `hook_failed`.
+
+### Approval foundation
+
+Эскалируемые policy-отказы проходят через `internal/approval`: trace и hooks
+видят `approval_request`, затем `approval_decision`. По умолчанию
+`approval_mode` равен `deny`; `--approval ask` включает CLI prompt, а `--yolo`
+автоматически подтверждает эскалируемые отказы внутри workspace. Пути за
+пределами workspace и невалидные команды не эскалируются.
 
 ## Future work
 
@@ -70,6 +78,16 @@ Hooks разделены на `enforce` и `observe`. Старый `hooks.json` 
 V1 сериализует все write/shell действия. Более сильная версия может ввести
 global workspace scheduler: read locks, path-level write locks, global locks для
 опасных tools и общий механизм для parent и subagents.
+
+### Managed shell processes
+
+Долгий shell-запуск пока не реализован и не должен маскироваться обычным
+`run_shell`. Следующий шаг - отдельные tools `start_shell`, `shell_status` и
+`stop_shell`: первый создаёт управляемый процесс и сразу возвращает process id,
+второй читает buffered stdout/stderr и состояние, третий мягко завершает
+процесс и при необходимости убивает его. Lifecycle-события должны быть
+совместимы с текущей event bus: `process_started`, `process_output`,
+`process_stopped` и `process_failed`.
 
 ### MCP multiplexer
 

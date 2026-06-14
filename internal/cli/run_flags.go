@@ -14,6 +14,8 @@ type runFlagValues struct {
 	orchestrate         *bool
 	orchestrateRequired *bool
 	maxParallelTools    *int
+	approvalMode        *string
+	yoloMode            *bool
 }
 
 func registerRunFlags(fs *flag.FlagSet) runFlagValues {
@@ -24,6 +26,8 @@ func registerRunFlags(fs *flag.FlagSet) runFlagValues {
 		orchestrate:         fs.Bool("orchestrate", false, "make delegate_task available to the parent agent"),
 		orchestrateRequired: fs.Bool("orchestrate-required", false, "strict mode: parent coordinates work through subagents"),
 		maxParallelTools:    fs.Int("max-parallel-tool-calls", 0, "per-run max parallel read-only tool calls; default uses config"),
+		approvalMode:        fs.String("approval", "", "approval mode for escalatable policy denials: ask or deny"),
+		yoloMode:            fs.Bool("yolo", false, "auto-approve escalatable policy denials inside the workspace"),
 	}
 }
 
@@ -36,9 +40,15 @@ func (f runFlagValues) options() (agent.RunOptions, error) {
 	if err != nil {
 		return agent.RunOptions{}, err
 	}
+	approvalMode, err := selectedApprovalFlagMode(*f.approvalMode, flagWasPassed(f.fs, "approval"), *f.yoloMode)
+	if err != nil {
+		return agent.RunOptions{}, err
+	}
 	return agent.RunOptions{
 		OrchestrationMode:    mode,
 		MaxParallelToolCalls: maxParallel,
+		ApprovalMode:         approvalMode,
+		YoloMode:             *f.yoloMode,
 	}, nil
 }
 
@@ -73,6 +83,21 @@ func selectedMaxParallelToolCalls(fs *flag.FlagSet, value int) (int, error) {
 		return 0, fmt.Errorf("max-parallel-tool-calls must be >= 1")
 	}
 	return value, nil
+}
+
+func selectedApprovalFlagMode(raw string, passed bool, yolo bool) (string, error) {
+	if !passed {
+		return "", nil
+	}
+	if raw == "deny" && yolo {
+		return "", fmt.Errorf("use either --approval deny or --yolo")
+	}
+	switch raw {
+	case "ask", "deny":
+		return raw, nil
+	default:
+		return "", fmt.Errorf("approval must be ask or deny")
+	}
 }
 
 func flagWasPassed(fs *flag.FlagSet, name string) bool {

@@ -20,6 +20,8 @@ var Events = map[string]bool{
 	"after_model_call":  true,
 	"before_tool_call":  true,
 	"after_tool_call":   true,
+	"approval_request":  true,
+	"approval_decision": true,
 	"session_end":       true,
 	"session_error":     true,
 }

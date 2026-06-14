@@ -20,6 +20,8 @@ type Settings struct {
 	WorkspaceRoot            string            `json:"workspace_root"`
 	ProtectedPaths           []string          `json:"protected_paths"`
 	AllowShell               bool              `json:"allow_shell"`
+	ApprovalMode             string            `json:"approval_mode"`
+	YoloMode                 bool              `json:"yolo_mode"`
 	OrchestrationEnabled     bool              `json:"orchestration_enabled"`
 	OrchestrationMode        string            `json:"orchestration_mode"`
 	SubagentMaxTurns         int               `json:"subagent_max_turns"`

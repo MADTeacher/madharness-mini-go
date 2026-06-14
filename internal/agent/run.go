@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
+	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
@@ -21,6 +22,9 @@ import (
 type RunOptions struct {
 	OrchestrationMode    string
 	MaxParallelToolCalls int
+	ApprovalMode         string
+	YoloMode             bool
+	ApprovalPrompter     approval.Prompter
 }
 
 // Run запускает агентский цикл до финального ответа или max_turns.
@@ -49,6 +53,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	}
 	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
 	defer eventBus.Close()
+	approvalManager := approvalManagerForRun(cfg, options, eventBus, "run")
 	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "run", HookData: map[string]any{
 		"task_preview": truncateForHook(task, 1000),
 		"cwd":          cfg.CWD,
@@ -105,7 +110,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
 			Index: subagentIndex,
 			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
-				return runSubagent(cfg, client, tr, subagent, args, eventBus)
+				return runSubagent(cfg, client, tr, subagent, args, eventBus, options)
 			},
 		})
 	}
@@ -113,6 +118,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, &mcp.ToolProvider{})
 	}
 	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
+		Approval:        approvalManager,
 		Trace:           tr,
 		ResourceTracker: runtime,
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),

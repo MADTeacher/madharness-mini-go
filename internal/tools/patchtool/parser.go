@@ -66,7 +66,7 @@ func (p *Parser) patchPath(raw string) (string, error) {
 	if scopeError := p.ctx.WritePathError(raw); scopeError != "" {
 		return "", fmt.Errorf("%s", scopeError)
 	}
-	return p.ctx.Policy.SafePath(raw)
+	return p.ctx.SafePathForTool("apply_patch", raw, "patch_path")
 }
 
 func (p *Parser) mark(path string, raw string) error {

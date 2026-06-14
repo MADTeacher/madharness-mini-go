@@ -17,6 +17,8 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
 	t.Setenv("MADHARNESS_MINI_MAX_IMAGE_BYTES", "")
 	t.Setenv("MADHARNESS_MINI_IMAGE_DETAIL", "")
+	t.Setenv("MADHARNESS_MINI_APPROVAL_MODE", "")
+	t.Setenv("MADHARNESS_MINI_YOLO", "")
 }
 
 func TestDefaultsMergeWithFile(t *testing.T) {
@@ -113,6 +115,24 @@ func TestEnvFileOverridesOrchestrationSettings(t *testing.T) {
 	}
 }
 
+func TestEnvFileOverridesApprovalSettings(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
+	env := "MADHARNESS_MINI_APPROVAL_MODE=ask\nMADHARNESS_MINI_YOLO=true\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Data.ApprovalMode != "ask" || !cfg.Data.YoloMode {
+		t.Fatalf("approval settings were not applied: %+v", cfg.Data)
+	}
+}
+
 func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
 	cleanEnv(t)
 	root := t.TempDir()
@@ -133,6 +153,7 @@ func TestEnvFileRejectsInvalidImageSettings(t *testing.T) {
 		"int":           "MADHARNESS_MINI_MAX_IMAGE_BYTES=-1\n",
 		"detail":        "MADHARNESS_MINI_IMAGE_DETAIL=microscope\n",
 		"orchestration": "MADHARNESS_MINI_ORCHESTRATION_MODE=surprise\n",
+		"approval":      "MADHARNESS_MINI_APPROVAL_MODE=surprise\n",
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {

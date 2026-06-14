@@ -17,7 +17,7 @@ func Specs() []tools.Spec {
 }
 
 func listFiles(ctx *tools.Context, args map[string]any) tools.Observation {
-	base, err := ctx.Policy.SafePath(tools.StringArg(args, "path", "."))
+	base, err := ctx.SafePathForTool("list_files", tools.StringArg(args, "path", "."), "list_path")
 	if err != nil {
 		return tools.Fail("list_files", err.Error())
 	}
@@ -80,7 +80,7 @@ func listFiles(ctx *tools.Context, args map[string]any) tools.Observation {
 
 func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	rawPath := tools.StringArg(args, "path", "")
-	path, err := ctx.Policy.SafePath(rawPath)
+	path, err := ctx.SafePathForTool("read_file", rawPath, "read_path")
 	if err != nil {
 		return tools.Fail("read_file", err.Error())
 	}
@@ -119,7 +119,7 @@ func writeFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	if scopeError := ctx.WritePathError(rawPath); scopeError != "" {
 		return tools.Fail("write_file", scopeError)
 	}
-	path, err := ctx.Policy.SafePath(rawPath)
+	path, err := ctx.SafePathForTool("write_file", rawPath, "write_path")
 	if err != nil {
 		return tools.Fail("write_file", err.Error())
 	}

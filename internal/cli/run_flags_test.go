@@ -48,3 +48,43 @@ func TestRunFlagsRejectInvalidParallelOverride(t *testing.T) {
 		t.Fatal("expected max parallel validation error")
 	}
 }
+
+func TestRunFlagsAcceptApprovalAndYolo(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags := registerRunFlags(fs)
+	if err := fs.Parse([]string{"--approval", "ask", "--yolo", "task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	options, err := flags.options()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.ApprovalMode != "ask" || !options.YoloMode {
+		t.Fatalf("options = %+v", options)
+	}
+}
+
+func TestRunFlagsRejectInvalidApprovalMode(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags := registerRunFlags(fs)
+	if err := fs.Parse([]string{"--approval", "maybe", "task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := flags.options(); err == nil {
+		t.Fatal("expected approval validation error")
+	}
+}
+
+func TestRunFlagsRejectConflictingApprovalAndYolo(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags := registerRunFlags(fs)
+	if err := fs.Parse([]string{"--approval", "deny", "--yolo", "task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := flags.options(); err == nil {
+		t.Fatal("expected approval/yolo conflict")
+	}
+}

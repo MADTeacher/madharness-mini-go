@@ -184,6 +184,8 @@ func testAgentConfig(t *testing.T) *config.Config {
 	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
 	t.Setenv("MADHARNESS_MINI_MAX_IMAGE_BYTES", "")
 	t.Setenv("MADHARNESS_MINI_IMAGE_DETAIL", "")
+	t.Setenv("MADHARNESS_MINI_APPROVAL_MODE", "")
+	t.Setenv("MADHARNESS_MINI_YOLO", "")
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

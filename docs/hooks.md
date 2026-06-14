@@ -20,7 +20,7 @@ Hooks - это небольшая точка расширения `madharness-mi
 | `internal/hooks/types.go` | Публичные типы `Event`, `Decision`, `Provider` и список событий. |
 | `internal/hooks/config.go` | Читает `.madharness-mini/hooks.json` и проверяет поля обработчиков. |
 | `internal/hooks/commands.go` | Запускает пользовательские команды через `exec.CommandContext` без shell. |
-| `internal/hooks/manager.go` | Разделяет hooks на `enforce` и `observe`, пишет hook-события в trace и возвращает blocking-решение только для `before_tool_call`. |
+| `internal/hooks/manager.go` | Разделяет hooks на `enforce` и `observe`, пишет hook-события в trace и возвращает blocking-решение для `before_tool_call` и `approval_request`. |
 | `internal/hooks/observe_queue.go` | Держит ограниченную очередь observe hooks и дожидается drain в конце запуска. |
 | `internal/hooks/redaction.go` | Обрезает большие payload и прячет очевидные секретные поля перед передачей в hook. |
 
@@ -54,10 +54,10 @@ flowchart TD
     N --> D
 ```
 
-Главное правило: только `enforce` hook на `before_tool_call` может остановить
-действие. Остальные events нужны для аудита, логирования и внешней
-автоматизации. `observe` hooks никогда не блокируют действие, даже если
-возвращают `{ "ok": false }`.
+Главное правило: только `enforce` hook на `before_tool_call` или
+`approval_request` может остановить действие. Остальные events нужны для аудита,
+логирования и внешней автоматизации. `observe` hooks никогда не блокируют
+действие, даже если возвращают `{ "ok": false }`.
 
 Если hook блокирует tool, handler инструмента не запускается. Harness создаёт
 обычное observation:
@@ -155,6 +155,8 @@ flowchart TD
 | `after_model_call` | После ответа модели. | `turn`, `message.content_preview`, `message.tool_calls_count`, `message.tools`. |
 | `before_tool_call` | После разбора имени tool и аргументов, до handler. | `turn`, `call_id`, `tool`, `args`. |
 | `after_tool_call` | После observation инструмента. | `turn`, `tool`, `args`, `observation`. |
+| `approval_request` | После эскалируемого policy-отказа, до CLI prompt или YOLO auto-approve. | `tool`, `action`, `subject`, `code`, `reason`; для путей также `path`, для shell также `command`. |
+| `approval_decision` | После hook/YOLO/CLI/config решения по approval request. | Поля request плюс `approved`, `source`, `decision_reason`, `message`. |
 | `session_end` | При нормальном финале, max turns или контролируемом вопросе пользователю. | `status`, `turns`, `result_preview`. |
 | `session_error` | При ошибке сессии, которую harness пробрасывает наружу. | `turn`, `error_type`, `message`. |
 
@@ -212,6 +214,47 @@ event = json.load(sys.stdin)
 Поле `message` попадает в `hook_finished`, а поле `block` - в `hook_blocked` и
 в summary observation.
 
+Блокировка влияет только на `before_tool_call` и `approval_request`. Если
+enforce hook блокирует `approval_request`, CLI prompt не показывается, а tool
+получает обычное fail-observation с исходной причиной policy-отказа.
+
+## Approval events
+
+Эскалируемыми считаются protected paths для model-invoked файловых tools,
+отключённый shell, рискованные shell-команды и shell control operators. Пути
+за пределами workspace, пустые пути, невалидные команды и несуществующий `cwd`
+не эскалируются.
+
+Пример payload для `approval_request`:
+
+```json
+{
+  "version": 1,
+  "event": "approval_request",
+  "kind": "run",
+  "trace_id": "20260529-171000-abc12345",
+  "data": {
+    "tool": "run_shell",
+    "action": "run_shell",
+    "subject": "curl --version",
+    "code": "risky_shell_command",
+    "reason": "risky shell command denied",
+    "command": "curl --version"
+  }
+}
+```
+
+`approval_decision` использует тот же request payload и добавляет:
+
+```json
+{
+  "approved": false,
+  "source": "config",
+  "decision_reason": "risky shell command denied",
+  "message": "approval mode is deny"
+}
+```
+
 ## Пример guard hook
 
 Такой hook запрещает читать один файл и удалять файлы через shell:
@@ -261,10 +304,13 @@ Hooks пишут события в тот же JSONL trace, что и model/tool
 | `hook_finished` | Hook успешно разрешил действие или просто записал аудит. |
 | `hook_blocked` | Hook вернул `ok: false` или `block`. |
 | `hook_failed` | Hook упал, вернул невалидный JSON, завершился с non-zero code или вышел по timeout. |
+| `approval_request` | Harness нашёл эскалируемый policy-отказ. |
+| `approval_decision` | Harness записал итог hook/YOLO/CLI/config решения. |
 
 Ошибки hooks не ломают запуск. Если `before_model_call` hook упал, trace
 получит `hook_failed`, но модель всё равно будет вызвана. Блокировка возможна
-только через валидный JSON-ответ `enforce` hook на `before_tool_call`.
+только через валидный JSON-ответ `enforce` hook на `before_tool_call` или
+`approval_request`.
 
 Observe hooks выполняются через очередь 32 элемента. Если очередь переполнена,
 trace получает `hook_failed` с причиной `observe hook queue full`, а агентский
@@ -278,6 +324,30 @@ trace получает `hook_failed` с причиной `observe hook queue ful
 
 ```bash
 go run ./cmd/madharness-mini trace <trace-id>
+```
+
+Если в trace были approval events, команда также показывает строку
+`approvals: requested N; approved N; denied N`.
+
+## CLI и config
+
+В `.madharness-mini/config.json` доступны поля:
+
+```json
+{
+  "approval_mode": "deny",
+  "yolo_mode": false
+}
+```
+
+`approval_mode` принимает `deny` или `ask`. Переменные окружения:
+`MADHARNESS_MINI_APPROVAL_MODE` и `MADHARNESS_MINI_YOLO`.
+
+Разовые CLI-флаги:
+
+```bash
+go run ./cmd/madharness-mini run --approval ask "..."
+go run ./cmd/madharness-mini run --yolo "..."
 ```
 
 ## Субагенты
@@ -322,6 +392,7 @@ shell-команды. Hooks добавляют проектные правила
 | Hook вернул невалидный JSON | Пишется `hook_failed`, запуск продолжается. |
 | Hook превысил timeout | Пишется `hook_failed`, запуск продолжается. |
 | Enforce hook вернул `ok: false` на `before_tool_call` | Tool handler не запускается, модель получает fail-observation. |
+| Enforce hook вернул `ok: false` на `approval_request` | CLI prompt не показывается, approval отклоняется, модель получает fail-observation. |
 | Enforce hook вернул `ok: false` на другом событии | Manager запишет `hook_blocked`; ход выполнения не меняется. |
 | Observe hook вернул `ok: false` | Manager запишет `hook_blocked`; ход выполнения не меняется. |
 | Observe queue переполнена | Пишется `hook_failed`, запуск продолжается. |

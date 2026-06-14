@@ -22,6 +22,22 @@ func TestPolicyDeniesProtectedPaths(t *testing.T) {
 	}
 }
 
+func TestPathDecisionMarksProtectedPathEscalatable(t *testing.T) {
+	p := New(testPolicyConfig(t))
+	decision := p.SafePathDecision(".git/config")
+	if decision.Allowed || !decision.Escalatable || decision.Code != CodeProtectedPath || decision.Path == "" {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
+func TestPathDecisionKeepsOutsideWorkspaceNonEscalatable(t *testing.T) {
+	p := New(testPolicyConfig(t))
+	decision := p.SafePathDecision("../outside.txt")
+	if decision.Allowed || decision.Escalatable || decision.Code != CodePathOutsideWorkspace {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
 func TestShellPolicyDeniesRiskyCommands(t *testing.T) {
 	p := New(testPolicyConfig(t))
 	if ok, _ := p.ShellAllowed("rm -rf ."); ok {
@@ -32,6 +48,22 @@ func TestShellPolicyDeniesRiskyCommands(t *testing.T) {
 	}
 	if ok, reason := p.ShellAllowed("go test ./..."); !ok {
 		t.Fatalf("go test denied: %s", reason)
+	}
+}
+
+func TestShellDecisionMarksEscalatableAndStrictDenials(t *testing.T) {
+	p := New(testPolicyConfig(t))
+	risky := p.ShellDecision("curl --version")
+	if risky.Allowed || !risky.Escalatable || risky.Code != CodeRiskyShellCommand {
+		t.Fatalf("risky = %#v", risky)
+	}
+	control := p.ShellDecision("pwd && pwd")
+	if control.Allowed || !control.Escalatable || control.Code != CodeShellControlOperator {
+		t.Fatalf("control = %#v", control)
+	}
+	invalid := p.ShellDecision(`printf "unterminated`)
+	if invalid.Allowed || invalid.Escalatable || invalid.Code != CodeInvalidShellCommand {
+		t.Fatalf("invalid = %#v", invalid)
 	}
 }
 
@@ -51,6 +83,8 @@ func testPolicyConfig(t *testing.T) *config.Config {
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
 	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
+	t.Setenv("MADHARNESS_MINI_APPROVAL_MODE", "")
+	t.Setenv("MADHARNESS_MINI_YOLO", "")
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

@@ -45,6 +45,20 @@ func (c *Config) applyEnv() error {
 		}
 		c.Data.MaxParallelToolCalls = parsed
 	}
+	if value := env["MADHARNESS_MINI_APPROVAL_MODE"]; value != "" {
+		mode := strings.ToLower(strings.TrimSpace(value))
+		if !ApprovalModeValues[mode] {
+			return fmt.Errorf("invalid MADHARNESS_MINI_APPROVAL_MODE: %s; allowed: ask, deny", mode)
+		}
+		c.Data.ApprovalMode = mode
+	}
+	if value := env["MADHARNESS_MINI_YOLO"]; value != "" {
+		parsed, err := parseBoolEnv("MADHARNESS_MINI_YOLO", value)
+		if err != nil {
+			return err
+		}
+		c.Data.YoloMode = parsed
+	}
 	if value := env["MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT"]; value != "" {
 		parsed, err := parseBoolEnv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", value)
 		if err != nil {

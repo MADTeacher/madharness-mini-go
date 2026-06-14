@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 )
@@ -19,6 +20,7 @@ type Registry struct {
 
 // RegistryOptions передаёт handlers наблюдаемость текущего run.
 type RegistryOptions struct {
+	Approval              *approval.Manager
 	Trace                 TraceWriter
 	ResourceTracker       ResourceTracker
 	AllowedTools          []string
@@ -36,6 +38,7 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 	ctx := &Context{
 		Config:                cfg,
 		Policy:                policy.New(cfg),
+		Approval:              options.Approval,
 		Trace:                 options.Trace,
 		ResourceTracker:       options.ResourceTracker,
 		WritableSuffixes:      normalizeSuffixes(options.WritableSuffixes),

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 )
 
 func TestBeforeToolCallHookBlocksBeforeHandler(t *testing.T) {
@@ -113,6 +115,42 @@ func TestObserveBeforeToolCallHookCannotBlockHandler(t *testing.T) {
 	observation := firstObservation(events, "read_file")
 	if observation["ok"] != true || observation["hook_blocked"] == true {
 		t.Fatalf("observation = %#v", observation)
+	}
+}
+
+func TestApprovalRequestHookBlocksBeforePromptDecision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fixture is POSIX-specific")
+	}
+	cfg := testAgentConfig(t)
+	writeAgentHook(t, cfg.Root, "deny_approval.sh", "#!/bin/sh\nprintf '{\"ok\":false,\"block\":\"no approval\"}'\n")
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"deny-approval","event":"approval_request","match":{"tool":"run_shell"},"command":"./deny_approval.sh","cwd":".","timeout_seconds":3}]}`)
+	client := shellThenDoneClient(`{"command":"curl --version"}`)
+
+	result, tracePath, err := runWithClientOptions("run risky", cfg, client, RunOptions{
+		ApprovalMode: approval.ModeAsk,
+		ApprovalPrompter: approval.StaticPrompter{Decision: approval.Decision{
+			Approved: true,
+			Source:   approval.SourceCLI,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result != "done" || len(client.seen) != 2 {
+		t.Fatalf("result=%q seen=%d", result, len(client.seen))
+	}
+	events := readTraceEvents(t, tracePath)
+	if !hasEvent(events, "approval_request") || !hasEvent(events, "approval_decision") {
+		t.Fatalf("approval events not found: %#v", events)
+	}
+	if blocked := findEvent(events, "hook_blocked"); blocked == nil || blocked["hook"] != "deny-approval" {
+		t.Fatalf("hook_blocked = %#v", blocked)
+	}
+	decision := findEvent(events, "approval_decision")
+	if decision["approved"] != false || decision["source"] != "deny-approval" {
+		t.Fatalf("approval_decision = %#v", decision)
 	}
 }
 

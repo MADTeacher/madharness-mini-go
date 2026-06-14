@@ -90,13 +90,17 @@ func (m *Manager) Publish(event events.Event) events.Decision {
 			continue
 		}
 		decision := m.handle(provider, event)
-		if !decision.OK && event.Name == "before_tool_call" {
+		if !decision.OK && canBlock(event.Name) {
 			blocked = decision
 			break
 		}
 	}
 	m.enqueueObserve(event)
 	return blocked
+}
+
+func canBlock(eventName string) bool {
+	return eventName == "before_tool_call" || eventName == "approval_request"
 }
 
 // Emit отправляет lifecycle-событие подходящим hooks по порядку.

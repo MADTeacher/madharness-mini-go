@@ -19,6 +19,12 @@ var OrchestrationModeValues = map[string]bool{
 	"required":  true,
 }
 
+// ApprovalModeValues перечисляет режимы обработки эскалируемых отказов policy.
+var ApprovalModeValues = map[string]bool{
+	"ask":  true,
+	"deny": true,
+}
+
 // DefaultSettings задаёт минимальную рабочую конфигурацию текущей учебной ветки.
 func DefaultSettings() Settings {
 	return Settings{
@@ -33,6 +39,8 @@ func DefaultSettings() Settings {
 		WorkspaceRoot:            ".",
 		ProtectedPaths:           []string{".git", ".env", "secrets", "~/.ssh"},
 		AllowShell:               true,
+		ApprovalMode:             "deny",
+		YoloMode:                 false,
 		OrchestrationEnabled:     true,
 		OrchestrationMode:        "auto",
 		SubagentMaxTurns:         10,
