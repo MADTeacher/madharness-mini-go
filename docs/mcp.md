@@ -61,8 +61,11 @@ go run ./cmd/madharness-mini run "Через MCP узнай текущее вр�
 
 ## Как проходит запуск
 
-В `agent.Run()` всегда добавляется `mcp.ToolProvider`. Если `mcp.json` нет, он
-ничего не регистрирует. Если файл есть, поток такой:
+В обычном `agent.Run()` добавляется `mcp.ToolProvider`. Если `mcp.json` нет, он
+ничего не регистрирует. В режиме `--orchestrate-required` provider MCP не
+добавляется: этот флаг сам по себе включает только обязательную оркестрацию и
+не делает MCP tools доступными parent-run. Если файл есть и режим запуска
+подключает MCP, поток такой:
 
 1. `internal/mcp` читает `.madharness-mini/mcp.json`.
 2. Для каждого `enabled: true` сервера проверяются `command`, `args`, `cwd`,

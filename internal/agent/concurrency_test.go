@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,38 +27,47 @@ func TestRunModelLoopOverlapsReadToolsWhenParallelEnabled(t *testing.T) {
 
 func TestRunModelLoopSerializesReadToolsWhenParallelDisabled(t *testing.T) {
 	release := make(chan struct{})
+	released := atomic.Bool{}
+	earlyStart := atomic.Bool{}
 	started := make(chan string, 2)
 	provider := concurrencyProvider{
 		"slow_read_a": blockingTool("slow_read_a", tools.EffectRead, started, release),
-		"slow_read_b": blockingTool("slow_read_b", tools.EffectRead, started, release),
+		"slow_read_b": guardedBlockingTool("slow_read_b", tools.EffectRead, started, release, &released, &earlyStart),
 	}
 	done := runConcurrencyLoop(t, provider, 1, "slow_read_a", "slow_read_b")
 
 	waitToolStarted(t, started, "slow_read_a")
-	assertNoToolStart(t, started)
+	released.Store(true)
 	close(release)
 	waitToolStarted(t, started, "slow_read_b")
+	assertNoEarlyToolStart(t, &earlyStart, "slow_read_b")
 	waitLoopDone(t, done)
 }
 
 func TestRunModelLoopKeepsWriteToolAsBarrier(t *testing.T) {
 	releaseRead := make(chan struct{})
 	releaseWrite := make(chan struct{})
+	readReleased := atomic.Bool{}
+	writeReleased := atomic.Bool{}
+	earlyWriteStart := atomic.Bool{}
+	earlyReadStart := atomic.Bool{}
 	started := make(chan string, 3)
 	provider := concurrencyProvider{
 		"slow_read_a": blockingTool("slow_read_a", tools.EffectRead, started, releaseRead),
-		"slow_write":  blockingTool("slow_write", tools.EffectWrite, started, releaseWrite),
-		"slow_read_b": instantTool("slow_read_b", tools.EffectRead, started),
+		"slow_write":  guardedBlockingTool("slow_write", tools.EffectWrite, started, releaseWrite, &readReleased, &earlyWriteStart),
+		"slow_read_b": guardedInstantTool("slow_read_b", tools.EffectRead, started, &writeReleased, &earlyReadStart),
 	}
 	done := runConcurrencyLoop(t, provider, 3, "slow_read_a", "slow_write", "slow_read_b")
 
 	waitToolStarted(t, started, "slow_read_a")
-	assertNoToolStart(t, started)
+	readReleased.Store(true)
 	close(releaseRead)
 	waitToolStarted(t, started, "slow_write")
-	assertNoToolStart(t, started)
+	assertNoEarlyToolStart(t, &earlyWriteStart, "slow_write")
+	writeReleased.Store(true)
 	close(releaseWrite)
 	waitToolStarted(t, started, "slow_read_b")
+	assertNoEarlyToolStart(t, &earlyReadStart, "slow_read_b")
 	waitLoopDone(t, done)
 }
 
@@ -178,10 +188,50 @@ func blockingTool(name string, effect tools.Effect, started chan<- string, relea
 	}
 }
 
+func guardedBlockingTool(
+	name string,
+	effect tools.Effect,
+	started chan<- string,
+	release <-chan struct{},
+	allowed *atomic.Bool,
+	earlyStart *atomic.Bool,
+) tools.Spec {
+	return tools.Spec{
+		Effect: effect,
+		Handler: func(_ *tools.Context, _ map[string]any) tools.Observation {
+			if !allowed.Load() {
+				earlyStart.Store(true)
+			}
+			started <- name
+			<-release
+			return tools.OK("test_tool", "done", nil)
+		},
+	}
+}
+
 func instantTool(name string, effect tools.Effect, started chan<- string) tools.Spec {
 	return tools.Spec{
 		Effect: effect,
 		Handler: func(_ *tools.Context, _ map[string]any) tools.Observation {
+			started <- name
+			return tools.OK("test_tool", "done", nil)
+		},
+	}
+}
+
+func guardedInstantTool(
+	name string,
+	effect tools.Effect,
+	started chan<- string,
+	allowed *atomic.Bool,
+	earlyStart *atomic.Bool,
+) tools.Spec {
+	return tools.Spec{
+		Effect: effect,
+		Handler: func(_ *tools.Context, _ map[string]any) tools.Observation {
+			if !allowed.Load() {
+				earlyStart.Store(true)
+			}
 			started <- name
 			return tools.OK("test_tool", "done", nil)
 		},
@@ -219,12 +269,19 @@ func waitToolStarted(t *testing.T, started <-chan string, want string) {
 	}
 }
 
+func assertNoEarlyToolStart(t *testing.T, earlyStart *atomic.Bool, name string) {
+	t.Helper()
+	if earlyStart.Load() {
+		t.Fatalf("%s started before the previous barrier was released", name)
+	}
+}
+
 func assertNoToolStart(t *testing.T, started <-chan string) {
 	t.Helper()
 	select {
 	case name := <-started:
 		t.Fatalf("unexpected tool start: %s", name)
-	case <-time.After(100 * time.Millisecond):
+	default:
 	}
 }
 

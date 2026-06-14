@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,25 +58,26 @@ func TestAskDoesNotStartMCP(t *testing.T) {
 
 func TestRunOverlapsMCPToolsWhenParallelEnabled(t *testing.T) {
 	cfg := testAgentConfig(t)
-	writeAgentMCPConfig(t, cfg)
+	overlapDir := filepath.Join(t.TempDir(), "mcp-overlap")
+	writeAgentMCPConfigWithEnv(t, cfg, map[string]string{
+		"AGENT_MCP_OVERLAP_DIR": overlapDir,
+	})
 	client := &sequenceClient{responses: []map[string]any{
 		mcpToolCallsResponse(),
 		contentResponse("done"),
 	}}
 
-	started := time.Now()
 	result, tracePath, err := runWithClientOptions("call MCP twice", cfg, client, RunOptions{MaxParallelToolCalls: 2})
-	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result != "done" {
 		t.Fatalf("result = %q", result)
 	}
-	if elapsed > 550*time.Millisecond {
-		t.Fatalf("MCP calls did not overlap enough, elapsed=%s", elapsed)
-	}
 	contents := mcpObservationContents(t, readTraceEvents(t, tracePath))
+	if mcpHasNoOverlapResult(contents) {
+		t.Fatalf("MCP calls did not overlap: %v", contents)
+	}
 	if len(contents) != 2 || contents[0] != "echo:first" || contents[1] != "echo:second" {
 		t.Fatalf("MCP observation order = %v", contents)
 	}
@@ -94,10 +96,21 @@ func TestHelperProcessAgentMCP(t *testing.T) {
 
 func writeAgentMCPConfig(t *testing.T, cfg *config.Config) string {
 	t.Helper()
+	return writeAgentMCPConfigWithEnv(t, cfg, nil)
+}
+
+func writeAgentMCPConfigWithEnv(t *testing.T, cfg *config.Config, extraEnv map[string]string) string {
+	t.Helper()
 	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(cfg.Root, "agent_mcp_closed.txt")
+	env := map[string]any{
+		"GO_WANT_AGENT_MCP_HELPER_PROCESS": "1",
+	}
+	for key, value := range extraEnv {
+		env[key] = value
+	}
 	data := map[string]any{
 		"servers": map[string]any{
 			"agentfake": map[string]any{
@@ -108,10 +121,8 @@ func writeAgentMCPConfig(t *testing.T, cfg *config.Config) string {
 					"--",
 					marker,
 				},
-				"cwd": ".",
-				"env": map[string]any{
-					"GO_WANT_AGENT_MCP_HELPER_PROCESS": "1",
-				},
+				"cwd":             ".",
+				"env":             env,
 				"timeout_seconds": 5,
 			},
 		},
@@ -192,17 +203,45 @@ func handleAgentFakeMCPMessage(message map[string]any) {
 func handleAgentFakeMCPToolCall(message map[string]any, requestID any) {
 	params, _ := message["params"].(map[string]any)
 	args, _ := params["arguments"].(map[string]any)
+	text, _ := args["text"].(string)
+	if overlapDir := os.Getenv("AGENT_MCP_OVERLAP_DIR"); overlapDir != "" {
+		if !waitAgentMCPOverlap(overlapDir, text) {
+			sendAgentFakeMCPToolResult(requestID, "no-overlap:"+text)
+			return
+		}
+	}
 	if delayMS := agentMCPIntArg(args, "delay_ms"); delayMS > 0 {
 		time.Sleep(time.Duration(delayMS) * time.Millisecond)
 	}
-	text, _ := args["text"].(string)
+	sendAgentFakeMCPToolResult(requestID, "echo:"+text)
+}
+
+func waitAgentMCPOverlap(dir string, text string) bool {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return false
+	}
+	if err := os.WriteFile(filepath.Join(dir, text+".started"), []byte(text), 0o644); err != nil {
+		return false
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		matches, err := filepath.Glob(filepath.Join(dir, "*.started"))
+		if err == nil && len(matches) >= 2 {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func sendAgentFakeMCPToolResult(requestID any, content string) {
 	sendAgentFakeMCP(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      requestID,
 		"result": map[string]any{
 			"content": []any{map[string]any{
 				"type": "text",
-				"text": "echo:" + text,
+				"text": content,
 			}},
 		},
 	})
@@ -216,8 +255,8 @@ func sendAgentFakeMCP(message map[string]any) {
 }
 
 func mcpToolCallsResponse() map[string]any {
-	firstArgs, _ := json.Marshal(map[string]any{"text": "first", "delay_ms": 300})
-	secondArgs, _ := json.Marshal(map[string]any{"text": "second", "delay_ms": 300})
+	firstArgs, _ := json.Marshal(map[string]any{"text": "first"})
+	secondArgs, _ := json.Marshal(map[string]any{"text": "second"})
 	return map[string]any{"choices": []any{map[string]any{"message": map[string]any{
 		"content": nil,
 		"tool_calls": []any{
@@ -245,6 +284,15 @@ func mcpObservationContents(t *testing.T, events []map[string]any) []string {
 		out = append(out, content)
 	}
 	return out
+}
+
+func mcpHasNoOverlapResult(contents []string) bool {
+	for _, content := range contents {
+		if strings.HasPrefix(content, "no-overlap:") {
+			return true
+		}
+	}
+	return false
 }
 
 func traceHasParallelMCPBatch(events []map[string]any) bool {

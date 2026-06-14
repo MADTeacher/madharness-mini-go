@@ -220,10 +220,11 @@ enforce hook блокирует `approval_request`, CLI prompt не показы
 
 ## Approval events
 
-Эскалируемыми считаются protected paths для model-invoked файловых tools,
-отключённый shell, рискованные shell-команды и shell control operators. Пути
-за пределами workspace, пустые пути, невалидные команды и несуществующий `cwd`
-не эскалируются.
+Эскалируемыми считаются `protected_paths` для model-invoked файловых tools,
+отключённый shell, рискованные shell-команды и shell control operators.
+`protected_paths` запрещены по умолчанию, но approval flow или YOLO-режим могут
+разрешить конкретное действие внутри workspace. Пути за пределами workspace,
+пустые пути, невалидные команды и несуществующий `cwd` не эскалируются.
 
 Пример payload для `approval_request`:
 

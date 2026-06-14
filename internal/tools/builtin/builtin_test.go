@@ -104,6 +104,79 @@ func TestApplyPatchCreatesAndUpdatesFile(t *testing.T) {
 	}
 }
 
+func TestApplyPatchDeletesFile(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	path := filepath.Join(cfg.Root, "delete-me.txt")
+	if err := os.WriteFile(path, []byte("temporary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patch := "*** Begin Patch\n*** Delete File: delete-me.txt\n*** End Patch"
+	obs := registry.Call("apply_patch", map[string]any{"patch": patch})
+
+	if obs["ok"] != true {
+		t.Fatalf("delete obs = %+v", obs)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("deleted path err = %v", err)
+	}
+}
+
+func TestApplyPatchMovesFile(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	oldPath := filepath.Join(cfg.Root, "old.txt")
+	newPath := filepath.Join(cfg.Root, "new.txt")
+	if err := os.WriteFile(oldPath, []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patch := "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n one\n-two\n+TWO\n*** End Patch"
+	obs := registry.Call("apply_patch", map[string]any{"patch": patch})
+
+	if obs["ok"] != true {
+		t.Fatalf("move obs = %+v", obs)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old path err = %v", err)
+	}
+	raw, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "one\nTWO\n" {
+		t.Fatalf("new content = %q", raw)
+	}
+}
+
+func TestApplyPatchRejectsOutsideWorkspace(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	outside := filepath.Clean(filepath.Join(cfg.Root, "..", "outside.txt"))
+	patch := "*** Begin Patch\n*** Add File: ../outside.txt\n+bad\n*** End Patch"
+
+	obs := registry.Call("apply_patch", map[string]any{"patch": patch})
+
+	if obs["ok"] != false || !strings.Contains(obs["summary"].(string), "outside workspace") {
+		t.Fatalf("outside obs = %+v", obs)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside path err = %v", err)
+	}
+}
+
+func TestApplyPatchRejectsDefaultProtectedPath(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	patch := "*** Begin Patch\n*** Add File: AGENTS.md\n+do not touch\n*** End Patch"
+
+	obs := registry.Call("apply_patch", map[string]any{"patch": patch})
+
+	if obs["ok"] != false || !strings.Contains(obs["summary"].(string), "protected path") {
+		t.Fatalf("protected obs = %+v", obs)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Root, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("protected path err = %v", err)
+	}
+}
+
 func TestApplyPatchReportsContextFailure(t *testing.T) {
 	cfg, registry := testRegistryWithConfig(t)
 	if err := os.WriteFile(filepath.Join(cfg.Root, "hello.txt"), []byte("one\n"), 0o644); err != nil {

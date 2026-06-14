@@ -191,7 +191,10 @@ go run ./cmd/madharness-mini skills validate
 | `skills_explicit_selection` | Пользователь явно указал skill-маркеры в задаче. |
 | `skills_auto_selection_disabled` | Auto-selection отключён из-за явного выбора. |
 | `skill_activated` | Skill стал active context-фрагментом. |
-| `skill_resource_used` | Инструмент обратился к файлу или cwd внутри активного skill root. |
+| `skill_resource_used` | `read_file` прочитал файл внутри активного skill root или `run_shell` запущен с `cwd` внутри него. |
 
 Полный текст активированного `SKILL.md` не дублируется в trace. В
 `context_report` видны только id, source и размер фрагмента.
+`write_file` и `apply_patch` сейчас не пишут `skill_resource_used`: событие
+используется только как аудит чтения skill-ресурсов и запуска documented scripts
+из skill-каталога.

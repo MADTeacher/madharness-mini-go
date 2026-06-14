@@ -2,6 +2,7 @@ package turnexec
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,10 +105,15 @@ func TestExecuteUsesToolLimitForMCPBatch(t *testing.T) {
 	}
 	started := make(chan string, len(tasks))
 	release := make(chan struct{})
+	released := atomic.Bool{}
+	earlyStart := atomic.Bool{}
 	done := make(chan []Result, 1)
 
 	go func() {
 		done <- Execute(Plan(tasks), 1, 2, func(task Task) (tools.Observation, []map[string]any) {
+			if task.Name == "second" && !released.Load() {
+				earlyStart.Store(true)
+			}
 			started <- task.Name
 			<-release
 			return tools.OK(task.Name, task.Name+" done", nil), nil
@@ -115,9 +121,10 @@ func TestExecuteUsesToolLimitForMCPBatch(t *testing.T) {
 	}()
 
 	waitStarted(t, started)
-	assertNoStart(t, started)
+	released.Store(true)
 	close(release)
 	waitStarted(t, started)
+	assertNoEarlyStart(t, &earlyStart, "second")
 
 	select {
 	case results := <-done:
@@ -136,10 +143,15 @@ func TestExecuteUsesSubagentLimitForDelegateBatch(t *testing.T) {
 	}
 	started := make(chan string, len(tasks))
 	release := make(chan struct{})
+	released := atomic.Bool{}
+	earlyStart := atomic.Bool{}
 	done := make(chan []Result, 1)
 
 	go func() {
 		done <- Execute(Plan(tasks), 2, 1, func(task Task) (tools.Observation, []map[string]any) {
+			if task.Name == "second" && !released.Load() {
+				earlyStart.Store(true)
+			}
 			started <- task.Name
 			<-release
 			return tools.OK(task.Name, task.Name+" done", nil), nil
@@ -147,9 +159,10 @@ func TestExecuteUsesSubagentLimitForDelegateBatch(t *testing.T) {
 	}()
 
 	waitStarted(t, started)
-	assertNoStart(t, started)
+	released.Store(true)
 	close(release)
 	waitStarted(t, started)
+	assertNoEarlyStart(t, &earlyStart, "second")
 
 	select {
 	case results := <-done:
@@ -200,11 +213,9 @@ func waitStarted(t *testing.T, started <-chan string) {
 	}
 }
 
-func assertNoStart(t *testing.T, started <-chan string) {
+func assertNoEarlyStart(t *testing.T, earlyStart *atomic.Bool, name string) {
 	t.Helper()
-	select {
-	case name := <-started:
-		t.Fatalf("unexpected task start: %s", name)
-	case <-time.After(100 * time.Millisecond):
+	if earlyStart.Load() {
+		t.Fatalf("%s started before the first task released its slot", name)
 	}
 }

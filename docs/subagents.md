@@ -223,6 +223,10 @@ go run ./cmd/madharness-mini run --orchestrate-required "..."
 go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 ```
 
+`--orchestrate-required` сужает parent-run до обязательной оркестрации через
+`delegate_task`. Он не добавляет `mcp.ToolProvider`, поэтому MCP tools не
+появляются только из-за этого флага.
+
 То же можно задать в `.env`:
 
 ```text
@@ -233,7 +237,10 @@ MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS=2
 ## Безопасность
 
 Субагенты используют тот же `Policy`, что и основной агент. Файловые tools не
-могут выйти за `workspace_root` и не могут трогать `protected_paths`.
+могут выйти за `workspace_root`; такие отказы не эскалируются как
+`protected_paths`. Пути из `protected_paths` запрещены по умолчанию, но
+model-invoked файловое действие внутри workspace может быть разрешено через
+approval flow или YOLO-режим.
 Shell-команды проходят обычную проверку `run_shell`: запрещены управляющие
 операторы shell и явно рискованные команды.
 
