@@ -8,6 +8,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 	"github.com/MADTeacher/madharness-mini-go/internal/processes"
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
@@ -156,14 +157,48 @@ func (r *Registry) Call(name string, args map[string]any) Observation {
 
 // CallWithFollowups выполняет tool и отделяет скрытые сообщения от observation.
 func (r *Registry) CallWithFollowups(name string, args map[string]any) (Observation, []map[string]any) {
+	return r.CallWithFollowupsInSpan(name, args, "", "")
+}
+
+// CallWithFollowupsInSpan выполняет tool со scoped trace/span context.
+func (r *Registry) CallWithFollowupsInSpan(name string, args map[string]any, spanID string, callID string) (Observation, []map[string]any) {
 	tool, ok := r.tools[name]
 	if !ok {
 		return Fail(name, "unknown tool"), nil
 	}
+	ctx := r.contextForSpan(spanID, callID)
 	obs := recoverCall(name, func() Observation {
-		return tool.Handler(r.ctx, args)
+		return tool.Handler(ctx, args)
 	})
 	return splitFollowupMessages(obs)
+}
+
+func (r *Registry) contextForSpan(spanID string, callID string) *Context {
+	if r == nil || r.ctx == nil || spanID == "" {
+		return r.ctx
+	}
+	ctx := *r.ctx
+	ctx.SpanID = spanID
+	ctx.CallID = callID
+	ctx.Trace = scopedTrace(r.ctx.Trace, spanID)
+	if r.ctx.Approval != nil {
+		approvalManager := *r.ctx.Approval
+		approvalManager.Trace = ctx.Trace
+		approvalManager.SpanID = spanID
+		ctx.Approval = &approvalManager
+	}
+	return &ctx
+}
+
+func scopedTrace(writer TraceWriter, spanID string) TraceWriter {
+	switch trace := writer.(type) {
+	case *tracepkg.Trace:
+		return trace.WithSpan(spanID)
+	case *tracepkg.ScopedTrace:
+		return trace.WithSpan(spanID)
+	default:
+		return writer
+	}
 }
 
 func recoverCall(name string, call func() Observation) (obs Observation) {

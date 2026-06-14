@@ -163,6 +163,54 @@ func TestRunOptionMaxParallelToolCallsReachesModelPayload(t *testing.T) {
 	}
 }
 
+func TestRunFinalizerWritesOneTerminalEvent(t *testing.T) {
+	cfg := testAgentConfig(t)
+	client := &sequenceClient{responses: []map[string]any{contentResponse("done")}}
+
+	result, tracePath, err := runWithClient("finish", cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q", result)
+	}
+	events := readTraceEvents(t, tracePath)
+	if countEvents(events, "session_end") != 1 {
+		t.Fatalf("session_end count = %d", countEvents(events, "session_end"))
+	}
+	if countEvents(events, "session_error") != 0 {
+		t.Fatalf("session_error count = %d", countEvents(events, "session_error"))
+	}
+	if got := openSpanCount(events); got != 0 {
+		t.Fatalf("open spans = %d", got)
+	}
+}
+
+func TestRunTraceAddsToolCallSpan(t *testing.T) {
+	cfg := testAgentConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.Root, "note.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := readFileThenDoneClient("note.txt")
+
+	result, tracePath, err := runWithClient("read note", cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q", result)
+	}
+	events := readTraceEvents(t, tracePath)
+	observation := firstObservationEvent(events, "read_file")
+	spanID, _ := observation["span_id"].(string)
+	if spanID == "" {
+		t.Fatalf("tool observation has no span_id: %#v", observation)
+	}
+	if !spanStarted(events, spanID, "tool_call") {
+		t.Fatalf("missing tool_call span for %s", spanID)
+	}
+}
+
 func TestRunKeepsImageTextOnlyWhenVisionIsDisabled(t *testing.T) {
 	cfg := testAgentConfig(t)
 	if err := os.WriteFile(filepath.Join(cfg.Root, "shot.png"), pngBytes, 0o644); err != nil {
@@ -268,6 +316,41 @@ func assertNoImagePayload(t *testing.T, text string) {
 	if strings.Contains(text, "data:image") || strings.Contains(text, "base64") {
 		t.Fatalf("unexpected image payload in %s", text)
 	}
+}
+
+func openSpanCount(events []map[string]any) int {
+	started := map[string]bool{}
+	for _, event := range events {
+		id, _ := event["span_id"].(string)
+		if id == "" {
+			continue
+		}
+		switch event["event"] {
+		case "span_start":
+			started[id] = true
+		case "span_end":
+			delete(started, id)
+		}
+	}
+	return len(started)
+}
+
+func spanStarted(events []map[string]any, spanID string, name string) bool {
+	for _, event := range events {
+		if event["event"] == "span_start" && event["span_id"] == spanID && event["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func firstObservationEvent(events []map[string]any, tool string) map[string]any {
+	for _, event := range events {
+		if event["event"] == "tool_observation" && event["tool"] == tool {
+			return event
+		}
+	}
+	return nil
 }
 
 func splitLines(text string) []string {

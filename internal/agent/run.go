@@ -51,13 +51,13 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	}
 	hookManager, err := hooks.FromConfig(cfg, tr)
 	if err != nil {
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
+		newSessionFinalizer("run", tr, nil).TraceOnlyError(err)
 		return "", tr.Path, err
 	}
 	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
-	defer eventBus.Close()
 	shared := newSessionShared(cfg, client, options)
-	defer shared.processes.CloseAll(tr)
+	finalizer := newSessionFinalizer("run", tr, eventBus)
+	finalizer.AddCleanup(func() { shared.processes.CloseAll(tr) })
 	session := newSession(shared, tr, eventBus, "run")
 	approvalManager := session.approvalManager("run")
 	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "run", HookData: map[string]any{
@@ -68,8 +68,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	subagentIndex := subagents.Discover(cfg)
 	orchestration, err := subagents.ResolveOrchestrationMode(cfg, task, options.OrchestrationMode)
 	if err != nil {
-		publishSessionEndTrace(eventBus, "error: "+err.Error())
-		emitSessionError(eventBus, "run", err, nil)
+		finalizer.Fail(err, nil)
 		return "", tr.Path, err
 	}
 	_ = tr.Write("orchestration_mode", map[string]any{
@@ -99,8 +98,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	if len(selection.Unknown) > 0 {
 		names := strings.Join(selection.Unknown, ", ")
 		err := fmt.Errorf("unknown skill: %s", names)
-		publishSessionEndTrace(eventBus, "error: "+err.Error())
-		emitSessionError(eventBus, "run", err, nil)
+		finalizer.Fail(err, nil)
 		return "", tr.Path, err
 	}
 	runtime := skills.NewRuntime(cfg, index)
@@ -116,7 +114,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
 			Index: subagentIndex,
 			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
-				return session.Delegate(subagent, args)
+				return session.Delegate(ctx, subagent, args)
 			},
 		})
 	}
@@ -132,15 +130,13 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {
-		publishSessionEndTrace(eventBus, "error: "+err.Error())
-		emitSessionError(eventBus, "run", err, nil)
+		finalizer.Fail(err, nil)
 		return "", tr.Path, err
 	}
-	defer registry.Close()
+	finalizer.AddCleanup(registry.Close)
 	context, err := BaseContext(cfg, task, contextProviders...)
 	if err != nil {
-		publishSessionEndTrace(eventBus, "error: "+err.Error())
-		emitSessionError(eventBus, "run", err, nil)
+		finalizer.Fail(err, nil)
 		return "", tr.Path, err
 	}
 	if orchestration.Effective == "required" {
@@ -150,8 +146,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		obs := runtime.Activate(name, "explicit")
 		if obs["ok"] != true {
 			err := fmt.Errorf("%v", obs["summary"])
-			publishSessionEndTrace(eventBus, "error: "+err.Error())
-			emitSessionError(eventBus, "run", err, nil)
+			finalizer.Fail(err, nil)
 			return "", tr.Path, err
 		}
 		applyHiddenObservationEffects(context, tr, obs)
@@ -162,7 +157,20 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		MaxParallelToolCalls: resolvedMaxParallelToolCalls(cfg, options),
 		MaxParallelSubagents: resolvedMaxParallelSubagents(cfg, options),
 	})
+	if err != nil {
+		finalizer.Fail(err, result.Turns)
+		return result.Result, tr.Path, err
+	}
+	finalizer.Finish(result.Status, result.Result, result.Turns, sessionEndHookData(result))
 	return result.Result, tr.Path, err
+}
+
+func sessionEndHookData(result loopResult) map[string]any {
+	return map[string]any{
+		"status":         result.Status,
+		"turns":          result.Turns,
+		"result_preview": truncateForHook(result.Result, 1000),
+	}
 }
 
 func applyRunOptionOverrides(cfg *config.Config, options RunOptions) func() {

@@ -6,6 +6,7 @@ type Event struct {
 	Name      string
 	Kind      string
 	TraceID   string
+	SpanID    string
 	HookData  map[string]any
 	TraceName string
 	TraceData map[string]any

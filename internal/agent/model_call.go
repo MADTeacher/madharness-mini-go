@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
-	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 const rateLimitRetryMaxSeconds = 60
@@ -18,7 +17,7 @@ type chatClient interface {
 
 func callModelWithRateLimitRetry(
 	client chatClient,
-	tr *trace.Trace,
+	tr traceWriter,
 	messages []map[string]any,
 	tools []map[string]any,
 	traceData map[string]any,
@@ -44,7 +43,13 @@ func callModelWithRateLimitRetry(
 	for key, value := range traceData {
 		fields[key] = value
 	}
-	_ = tr.Write("model_rate_limit_retry", fields)
+	if tr != nil {
+		_ = tr.Write("model_rate_limit_retry", fields)
+	}
 	sleep(time.Duration(limited.RetryAfterSeconds) * time.Second)
 	return client.Chat(messages, tools)
+}
+
+type traceWriter interface {
+	Write(event string, fields map[string]any) error
 }

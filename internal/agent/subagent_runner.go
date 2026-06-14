@@ -9,9 +9,11 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/subagents"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/builtin"
+	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 func (s *Session) Delegate(
+	parentCtx *tools.Context,
 	subagent subagents.Subagent,
 	args map[string]any,
 ) tools.Observation {
@@ -25,44 +27,53 @@ func (s *Session) Delegate(
 	if err != nil {
 		return tools.Fail("delegate_task", err.Error(), map[string]any{"subagent": subagent.Name})
 	}
-	subTrace, err := s.trace.Child("subagent", "subagent-"+subagent.Name)
+	parentSpanID := ""
+	parentToolCallID := ""
+	parentTrace := s.trace
+	if parentCtx != nil {
+		parentSpanID = parentCtx.SpanID
+		parentToolCallID = parentCtx.CallID
+	}
+	subTrace, err := s.trace.ChildWithParent("subagent", "subagent-"+subagent.Name, parentSpanID, parentToolCallID)
 	if err != nil {
 		return tools.Fail("delegate_task", err.Error(), map[string]any{"subagent": subagent.Name})
 	}
 	tracePath := subagents.TracePathForObservation(subTrace.Path, cfg.CWD)
 	subEvents := s.events.WithTrace(subTrace)
 	child := newSession(s.shared, subTrace, subEvents, "subagent")
+	finalizer := newSessionFinalizer("subagent", subTrace, subEvents)
 	publishEvent(subEvents, events.Event{Name: "session_start", Kind: "subagent", HookData: map[string]any{
 		"subagent":        subagent.Name,
 		"task_preview":    truncateForHook(task, 1000),
 		"parent_trace_id": s.trace.ID,
 	}})
-	_ = s.trace.Write("subagent_started", map[string]any{
+	parentWriter := parentTraceWriter(parentTrace, parentSpanID)
+	_ = parentWriter.Write("subagent_started", map[string]any{
 		"name":       subagent.Name,
 		"profile":    effectiveProfile(subagent, requestedProfile),
 		"trace_id":   subTrace.ID,
 		"trace_path": tracePath,
+		"span_id":    parentSpanID,
 	})
 
-	result, err := child.runSubagentLoop(subagent, args, task, allowedTools)
+	result, err := child.runSubagentLoop(subagent, args, task, allowedTools, finalizer)
 	if err != nil {
-		_ = s.trace.Write("subagent_failed", map[string]any{
+		_ = parentWriter.Write("subagent_failed", map[string]any{
 			"name":       subagent.Name,
 			"trace_id":   subTrace.ID,
 			"trace_path": tracePath,
 			"error":      err.Error(),
 		})
-		emitSessionError(subEvents, "subagent", err, nil)
-		_ = subEvents.Close()
+		finalizer.Fail(err, result.Turns)
 		return tools.Fail("delegate_task", "subagent failed: "+err.Error(), map[string]any{
 			"subagent":            subagent.Name,
 			"subagent_trace_id":   subTrace.ID,
 			"subagent_trace_path": tracePath,
 		})
 	}
-	_ = subEvents.Close()
+	finalizer.Finish(result.Status, result.Result, result.Turns, sessionEndHookData(result))
 	summary := subagents.SummarizeTrace(subTrace.Path)
-	_ = s.trace.Write("subagent_finished", map[string]any{
+	_ = parentWriter.Write("subagent_finished", map[string]any{
 		"name":          subagent.Name,
 		"status":        result.Status,
 		"trace_id":      subTrace.ID,
@@ -99,6 +110,7 @@ func (s *Session) runSubagentLoop(
 	args map[string]any,
 	task string,
 	allowedTools []string,
+	finalizer *sessionFinalizer,
 ) (loopResult, error) {
 	cfg := s.shared.cfg
 	contextMaxTokens := subagent.ContextMaxTokens
@@ -139,7 +151,7 @@ func (s *Session) runSubagentLoop(
 	if err != nil {
 		return loopResult{}, err
 	}
-	defer registry.Close()
+	finalizer.AddCleanup(registry.Close)
 	maxTurns := subagent.MaxTurns
 	if maxTurns == 0 {
 		maxTurns = cfg.Data.SubagentMaxTurns
@@ -149,6 +161,15 @@ func (s *Session) runSubagentLoop(
 		Events:          s.events,
 		Kind:            "subagent",
 	})
+}
+
+func parentTraceWriter(parent *trace.Trace, parentSpanID string) interface {
+	Write(string, map[string]any) error
+} {
+	if parent == nil || parentSpanID == "" {
+		return parent
+	}
+	return parent.WithSpan(parentSpanID)
 }
 
 func renderSubagentPrompt(subagent subagents.Subagent, allowedTools []string) string {

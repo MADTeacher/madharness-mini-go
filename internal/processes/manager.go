@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 const (
@@ -147,16 +149,26 @@ func (m *Manager) Start(options StartOptions) (Status, error) {
 	process.pid = cmd.Process.Pid
 	process.running = true
 	process.mu.Unlock()
-	writeTrace(options.Trace, "process_started", map[string]any{
+	span := startTraceSpan(options.Trace, "managed_process", map[string]any{
+		"process_id": process.id,
+		"name":       process.name,
+		"command":    process.command,
+		"cwd":        process.cwd,
+	})
+	traceWriter := options.Trace
+	if span != nil {
+		traceWriter = span.Trace()
+	}
+	writeTrace(traceWriter, "process_started", map[string]any{
 		"process_id": process.id,
 		"name":       process.name,
 		"command":    process.command,
 		"cwd":        process.cwd,
 		"pid":        process.pid,
 	})
-	go process.readStream("stdout", stdout, options.Trace)
-	go process.readStream("stderr", stderr, options.Trace)
-	go m.waitProcess(process, options.Trace, "exit")
+	go process.readStream("stdout", stdout, traceWriter)
+	go process.readStream("stderr", stderr, traceWriter)
+	go m.waitProcess(process, traceWriter, "exit", span)
 	if readyRe == nil {
 		return process.Status(), nil
 	}
@@ -286,7 +298,7 @@ func (m *Manager) dropReserved(process *Process) {
 	}
 }
 
-func (m *Manager) waitProcess(process *Process, trace TraceWriter, reason string) {
+func (m *Manager) waitProcess(process *Process, trace TraceWriter, reason string, span *tracepkg.Span) {
 	err := process.cmd.Wait()
 	process.finish(err)
 	m.mu.Lock()
@@ -302,6 +314,16 @@ func (m *Manager) waitProcess(process *Process, trace TraceWriter, reason string
 		"exit_code":  exitCodeValue(status.ExitCode),
 		"reason":     stopReason,
 	})
+	spanStatus := "ok"
+	if err != nil {
+		spanStatus = "error"
+	}
+	if span != nil {
+		span.End(spanStatus, map[string]any{
+			"exit_code": exitCodeValue(status.ExitCode),
+			"reason":    stopReason,
+		})
+	}
 }
 
 func (m *Manager) find(processID string, name string) (*Process, error) {
@@ -482,6 +504,17 @@ func writeTrace(trace TraceWriter, event string, fields map[string]any) {
 		return
 	}
 	_ = trace.Write(event, fields)
+}
+
+func startTraceSpan(trace TraceWriter, name string, fields map[string]any) *tracepkg.Span {
+	switch item := trace.(type) {
+	case *tracepkg.Trace:
+		return item.StartSpan(name, "", fields)
+	case *tracepkg.ScopedTrace:
+		return item.StartSpan(name, "", fields)
+	default:
+		return nil
+	}
 }
 
 func clipped(text string, limit int) string {

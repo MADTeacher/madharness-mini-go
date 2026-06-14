@@ -11,6 +11,8 @@ type Task struct {
 	Args        map[string]any
 	Effect      tools.Effect
 	Runnable    bool
+	SpanID      string
+	EndSpan     func(status string, fields map[string]any)
 	Observation tools.Observation
 	Followups   []map[string]any
 }

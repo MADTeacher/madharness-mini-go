@@ -76,6 +76,7 @@ func (s *Session) approvalManager(kind string) *approval.Manager {
 		Yolo:     yolo,
 		Kind:     kind,
 		Events:   s.events,
+		Trace:    s.trace,
 		Prompter: s.guardedPrompter(),
 	}
 }

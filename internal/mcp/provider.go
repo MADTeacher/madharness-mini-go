@@ -5,6 +5,7 @@ import (
 	"regexp"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 const toolNameMaxLength = 64
@@ -14,6 +15,7 @@ var unsafeToolNameChars = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 // ToolProvider запускает включённые MCP-серверы и отдаёт их tools в registry.
 type ToolProvider struct {
 	clients []*StdioClient
+	spans   map[*StdioClient]*tracepkg.Span
 	closed  bool
 }
 
@@ -25,21 +27,38 @@ func (p *ToolProvider) Specs(ctx *tools.Context) ([]tools.Spec, error) {
 	}
 	specs := []tools.Spec{}
 	for _, config := range configs {
+		span := startTraceSpan(ctx.Trace, "mcp_server", map[string]any{
+			"server":  config.Name,
+			"command": config.Command,
+		})
+		traceWriter := ctx.Trace
+		if span != nil {
+			traceWriter = span.Trace()
+		}
 		client := NewStdioClient(config)
 		listed, err := client.Start()
 		if err != nil {
-			if ctx.Trace != nil {
-				_ = ctx.Trace.Write("mcp_server_error", map[string]any{
+			if traceWriter != nil {
+				_ = traceWriter.Write("mcp_server_error", map[string]any{
 					"server": config.Name,
 					"error":  tools.Clipped(err.Error(), 1000),
 				})
+			}
+			if span != nil {
+				span.End("error", map[string]any{"error": tools.Clipped(err.Error(), 1000)})
 			}
 			client.Close()
 			return nil, fmt.Errorf("MCP server %s failed to start: %w", config.Name, err)
 		}
 		p.clients = append(p.clients, client)
-		if ctx.Trace != nil {
-			_ = ctx.Trace.Write("mcp_server_started", map[string]any{
+		if span != nil {
+			if p.spans == nil {
+				p.spans = map[*StdioClient]*tracepkg.Span{}
+			}
+			p.spans[client] = span
+		}
+		if traceWriter != nil {
+			_ = traceWriter.Write("mcp_server_started", map[string]any{
 				"server":      config.Name,
 				"command":     config.Command,
 				"tools_count": len(listed),
@@ -61,13 +80,32 @@ func (p *ToolProvider) Close(trace tools.TraceWriter) {
 	}
 	p.closed = true
 	for _, client := range p.clients {
+		span := p.spans[client]
+		traceWriter := trace
+		if span != nil {
+			traceWriter = span.Trace()
+		}
 		code := client.Close()
-		if trace != nil {
-			_ = trace.Write("mcp_server_stopped", map[string]any{
+		if traceWriter != nil {
+			_ = traceWriter.Write("mcp_server_stopped", map[string]any{
 				"server":    client.Config().Name,
 				"exit_code": code,
 			})
 		}
+		if span != nil {
+			span.End("ok", map[string]any{"exit_code": code})
+		}
+	}
+}
+
+func startTraceSpan(trace tools.TraceWriter, name string, fields map[string]any) *tracepkg.Span {
+	switch item := trace.(type) {
+	case *tracepkg.Trace:
+		return item.StartSpan(name, "", fields)
+	case *tracepkg.ScopedTrace:
+		return item.StartSpan(name, "", fields)
+	default:
+		return nil
 	}
 }
 

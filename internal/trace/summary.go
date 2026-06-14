@@ -102,6 +102,7 @@ func summarizePath(path string) (string, error) {
 	approvalApproved := 0
 	approvalDenied := 0
 	concurrency := collectConcurrencySummary(events)
+	spans := collectSpanSummary(events)
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i]["event"] == "session_end" {
 			result = fmt.Sprint(events[i]["result"])
@@ -235,6 +236,9 @@ func summarizePath(path string) (string, error) {
 	}
 	if concurrency.HasPlans {
 		lines = append(lines, concurrency.String())
+	}
+	if spans.Total > 0 {
+		lines = append(lines, spans.String())
 	}
 	lines = append(lines, fmt.Sprintf("result: %s", result))
 	return strings.Join(lines, "\n"), nil

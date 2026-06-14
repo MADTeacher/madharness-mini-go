@@ -14,10 +14,12 @@ func prepareToolTasks(
 	bus *events.Bus,
 	kind string,
 	turn int,
+	tr *trace.Trace,
+	parentSpanID string,
 ) []turnexec.Task {
 	tasks := make([]turnexec.Task, 0, len(calls))
 	for index, call := range calls {
-		tasks = append(tasks, prepareToolTask(registry, index, call, bus, kind, turn))
+		tasks = append(tasks, prepareToolTask(registry, index, call, bus, kind, turn, tr, parentSpanID))
 	}
 	return tasks
 }
@@ -29,19 +31,27 @@ func prepareToolTask(
 	bus *events.Bus,
 	kind string,
 	turn int,
+	tr *trace.Trace,
+	parentSpanID string,
 ) turnexec.Task {
+	callID := "tool_call"
 	callMap, ok := call.(map[string]any)
 	if !ok {
+		span := startToolCallSpan(tr, parentSpanID, turn, index, "", callID)
 		return turnexec.Task{
 			Index:       index,
 			Call:        map[string]any{"id": "tool_call"},
 			Name:        "tool_call",
 			Args:        map[string]any{},
 			Effect:      tools.EffectExclusive,
+			SpanID:      span.ID(),
+			EndSpan:     span.End,
 			Observation: tools.Fail("tool_call", "invalid tool call: invalid shape"),
 		}
 	}
+	callID = stringFromAny(callMap["id"])
 	name, args, err := tools.ParseToolArgs(callMap)
+	span := startToolCallSpan(tr, parentSpanID, turn, index, name, callID)
 	if err != nil {
 		return turnexec.Task{
 			Index:       index,
@@ -49,26 +59,31 @@ func prepareToolTask(
 			Name:        "tool_call",
 			Args:        map[string]any{},
 			Effect:      tools.EffectExclusive,
+			SpanID:      span.ID(),
+			EndSpan:     span.End,
 			Observation: tools.Fail("tool_call", "invalid tool call: "+err.Error()),
 		}
 	}
 	decision := publishEvent(bus, events.Event{
-		Name: "before_tool_call",
-		Kind: kind,
+		Name:   "before_tool_call",
+		Kind:   kind,
+		SpanID: span.ID(),
 		HookData: map[string]any{
 			"turn":    turn,
-			"call_id": stringFromAny(callMap["id"]),
+			"call_id": callID,
 			"tool":    name,
 			"args":    args,
 		},
 	})
 	if !decision.OK {
 		return turnexec.Task{
-			Index:  index,
-			Call:   callMap,
-			Name:   name,
-			Args:   args,
-			Effect: tools.EffectExclusive,
+			Index:   index,
+			Call:    callMap,
+			Name:    name,
+			Args:    args,
+			Effect:  tools.EffectExclusive,
+			SpanID:  span.ID(),
+			EndSpan: span.End,
 			Observation: tools.Fail(name, "blocked by hook: "+decision.Block, map[string]any{
 				"hook_blocked": true,
 			}),
@@ -81,7 +96,24 @@ func prepareToolTask(
 		Args:     args,
 		Effect:   registry.Effect(name),
 		Runnable: true,
+		SpanID:   span.ID(),
+		EndSpan:  span.End,
 	}
+}
+
+func startToolCallSpan(tr *trace.Trace, parentSpanID string, turn int, index int, tool string, callID string) *trace.Span {
+	if tr == nil {
+		return &trace.Span{}
+	}
+	fields := map[string]any{
+		"turn":       turn,
+		"tool_index": index,
+		"call_id":    callID,
+	}
+	if tool != "" {
+		fields["tool"] = tool
+	}
+	return tr.StartSpan("tool_call", parentSpanID, fields)
 }
 
 func commitToolResults(
@@ -102,8 +134,9 @@ func commitToolResults(
 		}
 		applyHiddenObservationEffects(context, tr, obs)
 		publishEvent(options.Events, events.Event{
-			Name: "after_tool_call",
-			Kind: kind,
+			Name:   "after_tool_call",
+			Kind:   kind,
+			SpanID: task.SpanID,
 			HookData: map[string]any{
 				"turn":        turn,
 				"tool":        task.Name,
@@ -117,6 +150,7 @@ func commitToolResults(
 				"observation": obs,
 			},
 		})
+		endToolSpan(task, obs)
 		if options.StopOnUserInput && subagentStop == "needs_user_input" {
 			stopped = stopForSubagentQuestion(options, kind, turn, obs)
 			return true
@@ -131,6 +165,20 @@ func commitToolResults(
 	return stopped, stop
 }
 
+func endToolSpan(task turnexec.Task, obs tools.Observation) {
+	if task.EndSpan == nil {
+		return
+	}
+	status := "ok"
+	if obs["ok"] == false {
+		status = "error"
+	}
+	task.EndSpan(status, map[string]any{
+		"tool":    task.Name,
+		"summary": stringObservationField(obs, "summary"),
+	})
+}
+
 func stopForSubagentQuestion(
 	options loopOptions,
 	kind string,
@@ -138,12 +186,6 @@ func stopForSubagentQuestion(
 	obs tools.Observation,
 ) loopResult {
 	question := stringObservationField(obs, "question")
-	result := "needs_user_input: " + question
-	publishSessionEnd(options.Events, kind, result, map[string]any{
-		"status":         "needs_user_input",
-		"turns":          turn + 1,
-		"result_preview": truncateForHook(question, 1000),
-	})
 	return loopResult{Status: "needs_user_input", Result: question, Turns: turn + 1, Observation: obs}
 }
 
@@ -162,11 +204,6 @@ func stopForParentQuestion(
 		"reason":              stringObservationField(obs, "reason"),
 		"subagent_trace_id":   stringObservationField(obs, "subagent_trace_id"),
 		"subagent_trace_path": stringObservationField(obs, "subagent_trace_path"),
-	})
-	publishSessionEnd(options.Events, kind, result, map[string]any{
-		"status":         "needs_user_input",
-		"turns":          turn + 1,
-		"result_preview": truncateForHook(result, 1000),
 	})
 	return loopResult{Status: "needs_user_input", Result: result, Turns: turn + 1, Observation: obs}
 }

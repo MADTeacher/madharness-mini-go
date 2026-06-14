@@ -45,6 +45,7 @@ func runModelLoop(
 		options.MaxParallelSubagents = 1
 	}
 	for turn := 0; turn < maxTurns; turn++ {
+		turnSpan := tr.StartSpan("turn", "", map[string]any{"turn": turn, "kind": kind})
 		toolSchemas := registry.Schemas()
 		messages, err := context.Messages(toolSchemas)
 		if err != nil {
@@ -53,14 +54,18 @@ func runModelLoop(
 				"error":          err.Error(),
 				"context_report": safeContextReport(context),
 			})
-			publishSessionEndTrace(options.Events, "error: "+err.Error())
-			emitSessionError(options.Events, kind, err, turn)
-			return loopResult{}, err
+			turnSpan.End("error", map[string]any{"error": err.Error()})
+			return loopResult{Status: "error", Turns: turn}, err
 		}
 		contextReport := context.Report()
+		modelSpan := tr.StartSpan("model_call", turnSpan.ID(), map[string]any{
+			"turn":        turn,
+			"tools_count": len(toolSchemas),
+		})
 		publishEvent(options.Events, events.Event{
-			Name: "before_model_call",
-			Kind: kind,
+			Name:   "before_model_call",
+			Kind:   kind,
+			SpanID: modelSpan.ID(),
 			HookData: map[string]any{
 				"turn":           turn,
 				"tools_count":    len(toolSchemas),
@@ -73,23 +78,24 @@ func runModelLoop(
 				"context_report": contextReport,
 			},
 		})
-		raw, err := callModelWithRateLimitRetry(client, tr, messages, toolSchemas, map[string]any{"turn": turn})
+		raw, err := callModelWithRateLimitRetry(client, modelSpan.Trace(), messages, toolSchemas, map[string]any{"turn": turn})
 		if err != nil {
-			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
-			publishSessionEndTrace(options.Events, "error: "+err.Error())
-			emitSessionError(options.Events, kind, err, turn)
-			return loopResult{}, err
+			_ = modelSpan.Trace().Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
+			modelSpan.End("error", map[string]any{"error": err.Error()})
+			turnSpan.End("error", map[string]any{"error": err.Error()})
+			return loopResult{Status: "error", Turns: turn}, err
 		}
 		message, err := responseMessage(raw)
 		if err != nil {
-			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
-			publishSessionEndTrace(options.Events, "error: "+err.Error())
-			emitSessionError(options.Events, kind, err, turn)
-			return loopResult{}, err
+			_ = modelSpan.Trace().Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
+			modelSpan.End("error", map[string]any{"error": err.Error()})
+			turnSpan.End("error", map[string]any{"error": err.Error()})
+			return loopResult{Status: "error", Turns: turn}, err
 		}
 		publishEvent(options.Events, events.Event{
-			Name: "after_model_call",
-			Kind: kind,
+			Name:   "after_model_call",
+			Kind:   kind,
+			SpanID: modelSpan.ID(),
 			HookData: map[string]any{
 				"turn":    turn,
 				"message": modelMessageSummary(message),
@@ -97,33 +103,27 @@ func runModelLoop(
 			TraceName: "model_call_finished",
 			TraceData: map[string]any{"turn": turn, "message": message},
 		})
+		modelSpan.End("ok", nil)
 		context.RecordAssistant(message)
 		calls := toolCalls(message)
 		if len(calls) == 0 {
 			result := messageContent(message)
-			publishSessionEnd(options.Events, kind, result, map[string]any{
-				"status":         "done",
-				"turns":          turn + 1,
-				"result_preview": truncateForHook(result, 1000),
-			})
+			turnSpan.End("done", nil)
 			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
-		tasks := prepareToolTasks(registry, calls, options.Events, kind, turn)
+		tasks := prepareToolTasks(registry, calls, options.Events, kind, turn, tr, turnSpan.ID())
 		groups := turnexec.Plan(tasks)
 		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, options.MaxParallelSubagents, groups)
 		results := turnexec.Execute(groups, options.MaxParallelToolCalls, options.MaxParallelSubagents, func(task turnexec.Task) (tools.Observation, []map[string]any) {
-			return registry.CallWithFollowups(task.Name, task.Args)
+			return registry.CallWithFollowupsInSpan(task.Name, task.Args, task.SpanID, stringFromAny(task.Call["id"]))
 		})
 		if result, stopped := commitToolResults(results, context, tr, options, kind, turn); stopped {
+			turnSpan.End(result.Status, nil)
 			return result, nil
 		}
+		turnSpan.End("continue", nil)
 	}
 	result := "Agent stopped: max_turns exceeded."
-	publishSessionEnd(options.Events, kind, result, map[string]any{
-		"status":         "max_turns",
-		"turns":          maxTurns,
-		"result_preview": result,
-	})
 	return loopResult{Status: "max_turns", Result: result, Turns: maxTurns}, nil
 }
 

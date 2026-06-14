@@ -55,6 +55,9 @@ func TestTraceWriteAndSummary(t *testing.T) {
 		if int(event["seq"].(float64)) != index+1 {
 			t.Fatalf("seq at %d = %v", index, event["seq"])
 		}
+		if event["event_id"] == "" {
+			t.Fatalf("missing event_id at %d: %#v", index, event)
+		}
 	}
 	summary, err := Summarize(cfg, tr.ID[:8])
 	if err != nil {
@@ -70,12 +73,43 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	if !strings.Contains(summary, "skills: discovered 2; activated docs-writer; resources used 1") {
 		t.Fatalf("summary = %s", summary)
 	}
+	if !strings.Contains(summary, "spans: total 1; open 1; max depth 1") {
+		t.Fatalf("summary = %s", summary)
+	}
 	exactSummary, err := Summarize(cfg, tr.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(exactSummary, "result: ok") {
 		t.Fatalf("summary = %s", exactSummary)
+	}
+}
+
+func TestTraceSpanNestingAndSummary(t *testing.T) {
+	cfg := testTraceConfig(t)
+	tr, err := New(cfg, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := tr.StartSpan("turn", tr.SessionSpanID(), map[string]any{"turn": 0})
+	model := tr.StartSpan("model_call", turn.ID(), map[string]any{"turn": 0})
+	if err := model.Trace().Write("model_call_started", map[string]any{"turn": 0}); err != nil {
+		t.Fatal(err)
+	}
+	model.End("ok", nil)
+	turn.End("done", nil)
+	tr.EndSessionSpan("ok", nil)
+
+	events := readTraceEvents(t, tr.Path)
+	if got := collectSpanSummary(events); got.Total != 3 || got.Open != 0 || got.MaxDepth != 3 {
+		t.Fatalf("span summary = %#v", got)
+	}
+	summary, err := Summarize(cfg, tr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "spans: total 3; open 0; max depth 3") {
+		t.Fatalf("summary = %s", summary)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 	"github.com/MADTeacher/madharness-mini-go/internal/processes"
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
@@ -18,6 +19,8 @@ type Context struct {
 	Policy                *policy.Policy
 	Approval              *approval.Manager
 	Trace                 TraceWriter
+	SpanID                string
+	CallID                string
 	ResourceTracker       ResourceTracker
 	Scheduler             *workspace.Scheduler
 	Processes             *processes.Manager
@@ -63,11 +66,20 @@ func (c *Context) lockWorkspace(tool string, mode workspace.LockMode, paths []st
 		return func() {}
 	}
 	displayPaths := c.workspaceLockDisplayPaths(paths)
+	span := c.startSpan("workspace_lock", map[string]any{
+		"tool":  tool,
+		"mode":  string(mode),
+		"paths": displayPaths,
+	})
+	writer := c.Trace
+	if span != nil {
+		writer = span.Trace()
+	}
 	started := time.Now()
 	release := c.Scheduler.Acquire(mode, paths)
 	waitMS := int(time.Since(started).Milliseconds())
-	if c.Trace != nil {
-		_ = c.Trace.Write("workspace_lock_acquired", map[string]any{
+	if writer != nil {
+		_ = writer.Write("workspace_lock_acquired", map[string]any{
 			"tool":    tool,
 			"mode":    string(mode),
 			"paths":   displayPaths,
@@ -76,12 +88,15 @@ func (c *Context) lockWorkspace(tool string, mode workspace.LockMode, paths []st
 	}
 	return func() {
 		release()
-		if c.Trace != nil {
-			_ = c.Trace.Write("workspace_lock_released", map[string]any{
+		if writer != nil {
+			_ = writer.Write("workspace_lock_released", map[string]any{
 				"tool":  tool,
 				"mode":  string(mode),
 				"paths": displayPaths,
 			})
+		}
+		if span != nil {
+			span.End("ok", map[string]any{"wait_ms": waitMS})
 		}
 	}
 }
@@ -103,6 +118,17 @@ func (c *Context) workspaceLockDisplayPaths(paths []string) []string {
 // TraceWriter — минимальный контракт trace, нужный handlers инструментов.
 type TraceWriter interface {
 	Write(event string, fields map[string]any) error
+}
+
+func (c *Context) startSpan(name string, fields map[string]any) *tracepkg.Span {
+	switch trace := c.Trace.(type) {
+	case *tracepkg.Trace:
+		return trace.StartSpan(name, "", fields)
+	case *tracepkg.ScopedTrace:
+		return trace.StartSpan(name, "", fields)
+	default:
+		return nil
+	}
 }
 
 // ResourceTracker определяет, относится ли путь к активному skill.

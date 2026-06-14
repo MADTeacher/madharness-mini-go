@@ -2,6 +2,7 @@ package approval
 
 import (
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 // Publisher — минимальный контракт event bus для approval lifecycle-событий.
@@ -15,6 +16,8 @@ type Manager struct {
 	Yolo     bool
 	Kind     string
 	Events   Publisher
+	Trace    any
+	SpanID   string
 	Prompter Prompter
 }
 
@@ -24,27 +27,36 @@ func (m *Manager) Decide(request Request) Decision {
 	if m == nil {
 		return deny(SourceConfig, request.Reason, "approval manager is not configured")
 	}
-	if decision := m.publishRequest(request); !decision.OK {
+	spanID := m.SpanID
+	span := m.startApprovalSpan(request)
+	if span != nil {
+		spanID = span.ID()
+	}
+	if decision := m.publishRequest(request, spanID); !decision.OK {
 		result := deny(sourceOr(decision.Source, SourceHook), blockOr(decision.Block, request.Reason), decision.Message)
-		m.publishDecision(request, result)
+		m.publishDecision(request, result, spanID)
+		endApprovalSpan(span, result)
 		return result
 	}
 	if m.Yolo {
 		result := Decision{Approved: true, Source: SourceYOLO, Reason: request.Reason, Message: "auto-approved by YOLO mode"}
-		m.publishDecision(request, result)
+		m.publishDecision(request, result, spanID)
+		endApprovalSpan(span, result)
 		return result
 	}
 	if m.mode() == ModeAsk {
 		result := m.ask(request)
-		m.publishDecision(request, result)
+		m.publishDecision(request, result, spanID)
+		endApprovalSpan(span, result)
 		return result
 	}
 	result := deny(SourceConfig, request.Reason, "approval mode is deny")
-	m.publishDecision(request, result)
+	m.publishDecision(request, result, spanID)
+	endApprovalSpan(span, result)
 	return result
 }
 
-func (m *Manager) publishRequest(request Request) events.Decision {
+func (m *Manager) publishRequest(request Request, spanID string) events.Decision {
 	if m.Events == nil {
 		return events.Allow()
 	}
@@ -52,13 +64,14 @@ func (m *Manager) publishRequest(request Request) events.Decision {
 	return m.Events.Publish(events.Event{
 		Name:      "approval_request",
 		Kind:      m.kind(),
+		SpanID:    spanID,
 		HookData:  data,
 		TraceName: "approval_request",
 		TraceData: data,
 	})
 }
 
-func (m *Manager) publishDecision(request Request, decision Decision) {
+func (m *Manager) publishDecision(request Request, decision Decision, spanID string) {
 	if m.Events == nil {
 		return
 	}
@@ -66,10 +79,36 @@ func (m *Manager) publishDecision(request Request, decision Decision) {
 	_ = m.Events.Publish(events.Event{
 		Name:      "approval_decision",
 		Kind:      m.kind(),
+		SpanID:    spanID,
 		HookData:  data,
 		TraceName: "approval_decision",
 		TraceData: data,
 	})
+}
+
+func (m *Manager) startApprovalSpan(request Request) *tracepkg.Span {
+	starter, ok := m.Trace.(interface {
+		StartSpan(string, string, map[string]any) *tracepkg.Span
+	})
+	if !ok {
+		return nil
+	}
+	return starter.StartSpan("approval", m.SpanID, map[string]any{
+		"action": request.Action,
+		"code":   request.Code,
+		"reason": request.Reason,
+	})
+}
+
+func endApprovalSpan(span *tracepkg.Span, decision Decision) {
+	if span == nil {
+		return
+	}
+	status := "denied"
+	if decision.Approved {
+		status = "ok"
+	}
+	span.End(status, map[string]any{"source": decision.Source, "reason": decision.Reason})
 }
 
 func (m *Manager) ask(request Request) Decision {

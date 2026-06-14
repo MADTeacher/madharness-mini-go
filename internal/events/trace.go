@@ -15,11 +15,24 @@ func (s *TraceSubscriber) Publish(event Event) Decision {
 	if s == nil || s.trace == nil || event.TraceName == "" {
 		return Allow()
 	}
-	_ = s.trace.Write(event.TraceName, event.TraceData)
+	data := event.TraceData
+	if event.SpanID != "" {
+		data = cloneTraceData(event.TraceData)
+		data["span_id"] = event.SpanID
+	}
+	_ = s.trace.Write(event.TraceName, data)
 	return Allow()
 }
 
 // WithTrace возвращает такой же trace-подписчик для дочерней trace.
 func (s *TraceSubscriber) WithTrace(trace TraceRef) Subscriber {
 	return NewTraceSubscriber(trace)
+}
+
+func cloneTraceData(data map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range data {
+		out[key] = value
+	}
+	return out
 }

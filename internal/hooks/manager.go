@@ -6,6 +6,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
+	tracepkg "github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 // ObserveQueueSize ограничивает backlog асинхронных observe hooks.
@@ -117,6 +118,9 @@ func (m *Manager) prepare(event events.Event) events.Event {
 		event.TraceID = traceID
 	}
 	event.HookData = compactMap(event.HookData)
+	if event.SpanID != "" {
+		event.HookData["span_id"] = event.SpanID
+	}
 	return event
 }
 
@@ -143,34 +147,41 @@ func (m *Manager) enqueueObserve(event Event) {
 
 func (m *Manager) handle(provider Provider, event Event) Decision {
 	started := time.Now()
-	m.write("hook_started", map[string]any{
+	span := m.startHookSpan(provider, event)
+	writer := m.trace
+	if span != nil {
+		writer = span.Trace()
+	}
+	writeTrace(writer, "hook_started", map[string]any{
 		"hook":       provider.ID(),
 		"hook_event": event.Name,
 		"kind":       event.Kind,
 	})
 	decision, err := provider.Handle(event)
 	if err != nil {
-		m.write("hook_failed", map[string]any{
+		writeTrace(writer, "hook_failed", map[string]any{
 			"hook":       provider.ID(),
 			"hook_event": event.Name,
 			"kind":       event.Kind,
 			"error":      tools.Clipped(err.Error(), 1000),
 			"elapsed_ms": elapsedMS(started),
 		})
+		endSpan(span, "error", map[string]any{"error": tools.Clipped(err.Error(), 1000)})
 		return Allow()
 	}
 	decision = withSource(decision, provider.ID())
 	if decision.OK {
-		m.write("hook_finished", map[string]any{
+		writeTrace(writer, "hook_finished", map[string]any{
 			"hook":       provider.ID(),
 			"hook_event": event.Name,
 			"kind":       event.Kind,
 			"message":    tools.Clipped(decision.Message, 1000),
 			"elapsed_ms": elapsedMS(started),
 		})
+		endSpan(span, "ok", nil)
 		return decision
 	}
-	m.write("hook_blocked", map[string]any{
+	writeTrace(writer, "hook_blocked", map[string]any{
 		"hook":       provider.ID(),
 		"hook_event": event.Name,
 		"kind":       event.Kind,
@@ -178,6 +189,7 @@ func (m *Manager) handle(provider Provider, event Event) Decision {
 		"message":    tools.Clipped(decision.Message, 1000),
 		"elapsed_ms": elapsedMS(started),
 	})
+	endSpan(span, "blocked", map[string]any{"block": tools.Clipped(decision.Block, 1000)})
 	return decision
 }
 
@@ -189,8 +201,32 @@ func withSource(decision Decision, source string) Decision {
 }
 
 func (m *Manager) write(event string, fields map[string]any) {
-	if m.trace != nil {
-		_ = m.trace.Write(event, fields)
+	writeTrace(m.trace, event, fields)
+}
+
+func writeTrace(trace TraceRef, event string, fields map[string]any) {
+	if trace != nil {
+		_ = trace.Write(event, fields)
+	}
+}
+
+func (m *Manager) startHookSpan(provider Provider, event Event) *tracepkg.Span {
+	starter, ok := m.trace.(interface {
+		StartSpan(string, string, map[string]any) *tracepkg.Span
+	})
+	if !ok {
+		return nil
+	}
+	return starter.StartSpan("hook", event.SpanID, map[string]any{
+		"hook":       provider.ID(),
+		"hook_event": event.Name,
+		"kind":       event.Kind,
+	})
+}
+
+func endSpan(span *tracepkg.Span, status string, fields map[string]any) {
+	if span != nil {
+		span.End(status, fields)
 	}
 }
 
