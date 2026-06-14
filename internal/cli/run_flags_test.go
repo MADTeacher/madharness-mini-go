@@ -24,7 +24,7 @@ func TestRunFlagsUseConfigParallelDefault(t *testing.T) {
 func TestRunFlagsAcceptParallelOverride(t *testing.T) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags := registerRunFlags(fs)
-	if err := fs.Parse([]string{"--max-parallel-tool-calls", "3", "task"}); err != nil {
+	if err := fs.Parse([]string{"--max-parallel-tool-calls", "3", "--max-parallel-subagents", "2", "task"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,6 +34,9 @@ func TestRunFlagsAcceptParallelOverride(t *testing.T) {
 	}
 	if options.MaxParallelToolCalls != 3 {
 		t.Fatalf("max parallel = %d", options.MaxParallelToolCalls)
+	}
+	if options.MaxParallelSubagents != 2 {
+		t.Fatalf("max parallel subagents = %d", options.MaxParallelSubagents)
 	}
 }
 
@@ -46,6 +49,18 @@ func TestRunFlagsRejectInvalidParallelOverride(t *testing.T) {
 
 	if _, err := flags.options(); err == nil {
 		t.Fatal("expected max parallel validation error")
+	}
+}
+
+func TestRunFlagsRejectInvalidSubagentParallelOverride(t *testing.T) {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags := registerRunFlags(fs)
+	if err := fs.Parse([]string{"--max-parallel-subagents", "0", "task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := flags.options(); err == nil {
+		t.Fatal("expected max parallel subagents validation error")
 	}
 }
 

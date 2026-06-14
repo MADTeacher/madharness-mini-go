@@ -45,6 +45,13 @@ func (c *Config) applyEnv() error {
 		}
 		c.Data.MaxParallelToolCalls = parsed
 	}
+	if value := env["MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS"]; value != "" {
+		parsed, err := parseIntEnv("MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS", value)
+		if err != nil {
+			return err
+		}
+		c.Data.MaxParallelSubagents = parsed
+	}
 	if value := env["MADHARNESS_MINI_APPROVAL_MODE"]; value != "" {
 		mode := strings.ToLower(strings.TrimSpace(value))
 		if !ApprovalModeValues[mode] {

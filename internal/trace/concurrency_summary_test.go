@@ -13,9 +13,11 @@ func TestSummarizeShowsConcurrencyPlan(t *testing.T) {
 	}
 	if err := tr.Write("tool_execution_plan", map[string]any{
 		"max_parallel_tool_calls": 3,
+		"max_parallel_subagents":  2,
 		"groups": []map[string]any{
-			{"parallel": true, "count": 2, "tools": []string{"read_file", "search_code"}},
-			{"parallel": false, "count": 1, "tools": []string{"write_file"}},
+			{"parallel": true, "kind": "read", "count": 2, "tools": []string{"read_file", "search_code"}},
+			{"parallel": true, "kind": "delegate", "count": 2, "tools": []string{"delegate_task", "delegate_task"}},
+			{"parallel": false, "kind": "barrier", "count": 1, "tools": []string{"write_file"}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -28,7 +30,7 @@ func TestSummarizeShowsConcurrencyPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "concurrency: max parallel 3; parallel read batches 1; barrier groups 1"
+	want := "concurrency: max tool calls 3; max subagents 2; parallel read batches 1; parallel delegate batches 1; barrier groups 1"
 	if !strings.Contains(summary, want) {
 		t.Fatalf("summary missing %q:\n%s", want, summary)
 	}

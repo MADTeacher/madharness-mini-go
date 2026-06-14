@@ -29,6 +29,8 @@ func listFiles(ctx *tools.Context, args map[string]any) tools.Observation {
 		info, _ = os.Stat(source)
 	}
 	if info != nil && !info.IsDir() {
+		release := ctx.LockWorkspaceRead("list_files", source)
+		defer release()
 		results := []string{}
 		if ok, _ := filepath.Match(pattern, filepath.Base(source)); ok && !tools.Ignored(source) {
 			if rel, err := filepath.Rel(ctx.Config.Root, source); err == nil {
@@ -43,6 +45,8 @@ func listFiles(ctx *tools.Context, args map[string]any) tools.Observation {
 			"truncated": false,
 		})
 	}
+	release := ctx.LockWorkspaceRead("list_files", source)
+	defer release()
 	results := []string{}
 	_ = filepath.WalkDir(source, func(path string, d os.DirEntry, err error) error {
 		if err != nil || tools.Ignored(path) {
@@ -84,6 +88,8 @@ func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	if err != nil {
 		return tools.Fail("read_file", err.Error())
 	}
+	release := ctx.LockWorkspaceRead("read_file", path)
+	defer release()
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return tools.Fail("read_file", "not a file: "+rawPath)
@@ -123,6 +129,8 @@ func writeFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	if err != nil {
 		return tools.Fail("write_file", err.Error())
 	}
+	release := ctx.LockWorkspaceWrite("write_file", path)
+	defer release()
 	content := tools.StringArg(args, "content", "")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return tools.Fail("write_file", err.Error())

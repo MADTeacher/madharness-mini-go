@@ -16,6 +16,16 @@
 go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "..."
 ```
 
+`max_parallel_subagents` управляет конкурентным запуском соседних
+`delegate_task` внутри одного parent turn-а. Это не отдельный лимит model calls:
+каждый субагент работает как дочерняя agent session со своей trace, context и
+registry, а число параллельных child sessions ограничивает число параллельных
+subagent model loops.
+
+```bash
+go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
+```
+
 Параллельно могут выполняться только соседние read-only tools:
 
 - `list_files`;
@@ -29,19 +39,44 @@ go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "..."
 - `apply_patch`;
 - `run_shell`;
 - `activate_skill`;
-- `delegate_task`;
 - MCP tools;
 - неизвестные tools без явного effect.
+
+Соседние `delegate_task` образуют отдельный parallel batch. Если один
+субагент просит ввод пользователя или завершается ошибкой, parent сначала
+дожидается уже запущенных sibling-субагентов, а затем применяет observations в
+исходном порядке tool calls.
 
 `before_tool_call` вызывается синхронно и в порядке ответа модели до запуска
 handler-ов. После выполнения handlers harness применяет observations, hidden
 effects, trace events и `RecordToolResult()` строго в исходном порядке
 `tool_calls`, даже если read-only handlers завершились в другом порядке.
 
-Перед выполнением tools harness пишет `tool_execution_plan` в trace: лимит,
-группы выполнения, имена tools и классы effects. Команда `trace` показывает
-краткую строку `concurrency` с max parallel, количеством read batches и
-barrier-групп.
+Перед выполнением tools harness пишет `tool_execution_plan` в trace: лимиты,
+группы выполнения, тип группы, имена tools и классы effects. Команда `trace`
+показывает краткую строку `concurrency` с max tool calls, max subagents,
+количеством read/delegate batches и barrier-групп.
+
+### Agent sessions
+
+Root-agent и каждый субагент выполняются как отдельные agent sessions. У
+сессии свои context, registry, event bus и trace; общими остаются config,
+model client, hook providers, approval prompt guard и workspace scheduler.
+История parent-сессии не копируется в child-сессию: субагент получает только
+свою `task` и явный `context` из аргументов `delegate_task`.
+
+### Workspace scheduler
+
+File/shell tools всех сессий проходят через общий workspace scheduler:
+
+- `list_files` и `read_file` берут path read lock;
+- `write_file` берёт path write lock;
+- `apply_patch` сначала вычисляет touched paths, затем берёт write locks на
+  весь набор и применяет patch;
+- `run_shell` берёт global exclusive lock на время subprocess.
+
+Locks не удерживаются во время model calls, lifecycle hooks preflight и
+approval prompt.
 
 ### Внутренняя event bus
 
@@ -66,18 +101,6 @@ Hooks разделены на `enforce` и `observe`. Старый `hooks.json` 
 пределами workspace и невалидные команды не эскалируются.
 
 ## Future work
-
-### Parallel subagents
-
-`delegate_task` пока остаётся barrier. Для параллельных субагентов нужен общий
-лимит model calls, корректная отмена, дочерние trace spans и понятный порядок
-возврата результатов parent-агенту.
-
-### Workspace scheduler
-
-V1 сериализует все write/shell действия. Более сильная версия может ввести
-global workspace scheduler: read locks, path-level write locks, global locks для
-опасных tools и общий механизм для parent и subagents.
 
 ### Managed shell processes
 

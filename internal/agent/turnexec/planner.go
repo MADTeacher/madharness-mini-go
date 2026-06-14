@@ -1,30 +1,50 @@
 package turnexec
 
-// Group хранит непрерывный участок turn-а: read batch или один barrier.
+const (
+	GroupBarrier  = "barrier"
+	GroupRead     = "read"
+	GroupDelegate = "delegate"
+)
+
+// Group хранит непрерывный участок turn-а: read/delegate batch или один barrier.
 type Group struct {
 	Tasks    []Task
 	Parallel bool
+	Kind     string
 }
 
-// Plan группирует соседние read-only calls и оставляет остальные calls барьерами.
+// Plan группирует соседние read-only/delegate calls и оставляет остальные calls барьерами.
 func Plan(tasks []Task) []Group {
 	groups := []Group{}
-	readBatch := []Task{}
-	flushReads := func() {
-		if len(readBatch) == 0 {
+	var batch []Task
+	batchKind := ""
+	flushBatch := func() {
+		if len(batch) == 0 {
 			return
 		}
-		groups = append(groups, Group{Tasks: append([]Task{}, readBatch...), Parallel: true})
-		readBatch = nil
+		groups = append(groups, Group{Tasks: append([]Task{}, batch...), Parallel: true, Kind: batchKind})
+		batch = nil
+		batchKind = ""
+	}
+	addBatch := func(kind string, task Task) {
+		if batchKind != "" && batchKind != kind {
+			flushBatch()
+		}
+		batchKind = kind
+		batch = append(batch, task)
 	}
 	for _, task := range tasks {
 		if task.readOnly() {
-			readBatch = append(readBatch, task)
+			addBatch(GroupRead, task)
 			continue
 		}
-		flushReads()
-		groups = append(groups, Group{Tasks: []Task{task}})
+		if task.delegate() {
+			addBatch(GroupDelegate, task)
+			continue
+		}
+		flushBatch()
+		groups = append(groups, Group{Tasks: []Task{task}, Kind: GroupBarrier})
 	}
-	flushReads()
+	flushBatch()
 	return groups
 }

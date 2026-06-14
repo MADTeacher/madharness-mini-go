@@ -2,15 +2,15 @@ package turnexec
 
 import "sync"
 
-// Execute запускает группы по порядку, а read batch - конкурентно с лимитом.
-func Execute(groups []Group, maxParallel int, handler Handler) []Result {
-	if maxParallel < 1 {
-		maxParallel = 1
-	}
+// Execute запускает группы по порядку, а read/delegate batches - конкурентно с лимитами.
+func Execute(groups []Group, maxParallelTools int, maxParallelSubagents int, handler Handler) []Result {
+	maxParallelTools = normalizedLimit(maxParallelTools)
+	maxParallelSubagents = normalizedLimit(maxParallelSubagents)
 	results := []Result{}
 	for _, group := range groups {
-		if group.Parallel && len(group.Tasks) > 1 && maxParallel > 1 {
-			results = append(results, executeParallel(group.Tasks, maxParallel, handler)...)
+		limit := groupLimit(group, maxParallelTools, maxParallelSubagents)
+		if group.Parallel && len(group.Tasks) > 1 && limit > 1 {
+			results = append(results, executeParallel(group.Tasks, limit, handler)...)
 			continue
 		}
 		for _, task := range group.Tasks {
@@ -18,6 +18,22 @@ func Execute(groups []Group, maxParallel int, handler Handler) []Result {
 		}
 	}
 	return results
+}
+
+func normalizedLimit(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
+}
+
+func groupLimit(group Group, maxParallelTools int, maxParallelSubagents int) int {
+	switch group.Kind {
+	case GroupDelegate:
+		return maxParallelSubagents
+	default:
+		return maxParallelTools
+	}
 }
 
 func executeParallel(tasks []Task, maxParallel int, handler Handler) []Result {

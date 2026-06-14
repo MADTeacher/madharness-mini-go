@@ -28,3 +28,7 @@ type Handler func(Task) (tools.Observation, []map[string]any)
 func (t Task) readOnly() bool {
 	return t.Runnable && tools.NormalizeEffect(t.Effect) == tools.EffectRead
 }
+
+func (t Task) delegate() bool {
+	return t.Runnable && tools.NormalizeEffect(t.Effect) == tools.EffectDelegate
+}

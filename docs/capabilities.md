@@ -17,10 +17,11 @@
 При локальной разработке команда запускается как `go run ./cmd/madharness-mini`.
 
 Для одного запуска `run` можно включить ограниченный параллелизм read-only
-tools:
+tools и соседних делегаций:
 
 ```bash
 go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "..."
+go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 ```
 
 Эскалируемые policy-отказы можно оставить в безопасном режиме `deny` или
@@ -70,6 +71,7 @@ Harness не запускает tool handler и возвращает модел�
 - Agent Skills и `activate_skill`;
 - stdio MCP tools;
 - markdown-субагентов, `delegate_task`, `ask_user` и дочерние traces;
+- agent sessions для root/subagent loop-ов и общий workspace scheduler;
 - базовые workspace tools: `list_files`, `read_file`, `search_code`,
   `write_file`, `apply_patch`, `run_shell`.
 

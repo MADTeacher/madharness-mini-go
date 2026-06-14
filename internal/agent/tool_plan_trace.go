@@ -5,7 +5,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
-func writeToolExecutionPlan(tr *trace.Trace, turn int, maxParallel int, groups []turnexec.Group) {
+func writeToolExecutionPlan(tr *trace.Trace, turn int, maxParallelTools int, maxParallelSubagents int, groups []turnexec.Group) {
 	if tr == nil {
 		return
 	}
@@ -13,6 +13,7 @@ func writeToolExecutionPlan(tr *trace.Trace, turn int, maxParallel int, groups [
 	for _, group := range groups {
 		items = append(items, map[string]any{
 			"parallel": group.Parallel,
+			"kind":     group.Kind,
 			"count":    len(group.Tasks),
 			"tools":    taskNames(group.Tasks),
 			"effects":  taskEffects(group.Tasks),
@@ -20,7 +21,8 @@ func writeToolExecutionPlan(tr *trace.Trace, turn int, maxParallel int, groups [
 	}
 	_ = tr.Write("tool_execution_plan", map[string]any{
 		"turn":                    turn,
-		"max_parallel_tool_calls": maxParallel,
+		"max_parallel_tool_calls": maxParallelTools,
+		"max_parallel_subagents":  maxParallelSubagents,
 		"groups":                  items,
 	})
 }

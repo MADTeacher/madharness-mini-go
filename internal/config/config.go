@@ -15,6 +15,7 @@ type Settings struct {
 	Temperature              float64           `json:"temperature"`
 	MaxTurns                 int               `json:"max_turns"`
 	MaxParallelToolCalls     int               `json:"max_parallel_tool_calls"`
+	MaxParallelSubagents     int               `json:"max_parallel_subagents"`
 	ContextMaxTokens         int               `json:"context_max_tokens"`
 	ContextKeepRecentTurns   int               `json:"context_keep_recent_turns"`
 	WorkspaceRoot            string            `json:"workspace_root"`
@@ -72,6 +73,9 @@ func New(cwd string) (*Config, error) {
 func (c *Config) normalize() {
 	if c.Data.MaxParallelToolCalls < 1 {
 		c.Data.MaxParallelToolCalls = 1
+	}
+	if c.Data.MaxParallelSubagents < 1 {
+		c.Data.MaxParallelSubagents = 1
 	}
 }
 

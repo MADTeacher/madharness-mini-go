@@ -18,7 +18,7 @@ func TestExecuteRunsReadBatchConcurrentlyAndKeepsOrder(t *testing.T) {
 
 	go func() {
 		groups := Plan(tasks)
-		done <- Execute(groups, 2, func(task Task) (tools.Observation, []map[string]any) {
+		done <- Execute(groups, 2, 1, func(task Task) (tools.Observation, []map[string]any) {
 			started <- task.Name
 			<-release
 			return tools.OK(task.Name, task.Name+" done", nil), nil
@@ -58,11 +58,71 @@ func TestPlanKeepsExclusiveTasksAsBarriers(t *testing.T) {
 	}
 }
 
+func TestPlanSeparatesReadAndDelegateBatches(t *testing.T) {
+	groups := Plan([]Task{
+		{Index: 0, Name: "read_file", Effect: tools.EffectRead, Runnable: true},
+		{Index: 1, Name: "delegate_task", Effect: tools.EffectDelegate, Runnable: true},
+		{Index: 2, Name: "delegate_task", Effect: tools.EffectDelegate, Runnable: true},
+		{Index: 3, Name: "search_code", Effect: tools.EffectRead, Runnable: true},
+	})
+
+	if len(groups) != 3 {
+		t.Fatalf("groups = %+v", groups)
+	}
+	if groups[0].Kind != GroupRead || groups[1].Kind != GroupDelegate || groups[2].Kind != GroupRead {
+		t.Fatalf("group kinds = %+v", groups)
+	}
+	if !groups[1].Parallel || len(groups[1].Tasks) != 2 {
+		t.Fatalf("delegate batch = %+v", groups[1])
+	}
+}
+
+func TestExecuteUsesSubagentLimitForDelegateBatch(t *testing.T) {
+	tasks := []Task{
+		{Index: 0, Name: "first", Effect: tools.EffectDelegate, Runnable: true},
+		{Index: 1, Name: "second", Effect: tools.EffectDelegate, Runnable: true},
+	}
+	started := make(chan string, len(tasks))
+	release := make(chan struct{})
+	done := make(chan []Result, 1)
+
+	go func() {
+		done <- Execute(Plan(tasks), 2, 1, func(task Task) (tools.Observation, []map[string]any) {
+			started <- task.Name
+			<-release
+			return tools.OK(task.Name, task.Name+" done", nil), nil
+		})
+	}()
+
+	waitStarted(t, started)
+	assertNoStart(t, started)
+	close(release)
+	waitStarted(t, started)
+
+	select {
+	case results := <-done:
+		if len(results) != 2 || results[0].Task.Name != "first" || results[1].Task.Name != "second" {
+			t.Fatalf("results order = %+v", results)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("delegate batch did not finish")
+	}
+}
+
 func waitStarted(t *testing.T, started <-chan string) {
 	t.Helper()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("task did not start")
+	}
+}
+
+func assertNoStart(t *testing.T, started <-chan string) {
+	t.Helper()
+	select {
+	case name := <-started:
+		t.Fatalf("unexpected task start: %s", name)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

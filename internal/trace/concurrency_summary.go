@@ -3,10 +3,12 @@ package trace
 import "fmt"
 
 type concurrencySummary struct {
-	HasPlans            bool
-	MaxParallel         int
-	ParallelReadBatches int
-	BarrierGroups       int
+	HasPlans                bool
+	MaxParallelTools        int
+	MaxParallelSubagents    int
+	ParallelReadBatches     int
+	ParallelDelegateBatches int
+	BarrierGroups           int
 }
 
 func collectConcurrencySummary(events []map[string]any) concurrencySummary {
@@ -16,12 +18,20 @@ func collectConcurrencySummary(events []map[string]any) concurrencySummary {
 			continue
 		}
 		summary.HasPlans = true
-		if maxParallel := intFromAny(event["max_parallel_tool_calls"]); maxParallel > summary.MaxParallel {
-			summary.MaxParallel = maxParallel
+		if maxParallel := intFromAny(event["max_parallel_tool_calls"]); maxParallel > summary.MaxParallelTools {
+			summary.MaxParallelTools = maxParallel
+		}
+		if maxParallel := intFromAny(event["max_parallel_subagents"]); maxParallel > summary.MaxParallelSubagents {
+			summary.MaxParallelSubagents = maxParallel
 		}
 		for _, group := range planGroups(event["groups"]) {
 			if boolFromAny(group["parallel"]) {
-				summary.ParallelReadBatches++
+				switch group["kind"] {
+				case "delegate":
+					summary.ParallelDelegateBatches++
+				default:
+					summary.ParallelReadBatches++
+				}
 			} else {
 				summary.BarrierGroups++
 			}
@@ -32,9 +42,11 @@ func collectConcurrencySummary(events []map[string]any) concurrencySummary {
 
 func (s concurrencySummary) String() string {
 	return fmt.Sprintf(
-		"concurrency: max parallel %d; parallel read batches %d; barrier groups %d",
-		s.MaxParallel,
+		"concurrency: max tool calls %d; max subagents %d; parallel read batches %d; parallel delegate batches %d; barrier groups %d",
+		s.MaxParallelTools,
+		s.MaxParallelSubagents,
 		s.ParallelReadBatches,
+		s.ParallelDelegateBatches,
 		s.BarrierGroups,
 	)
 }

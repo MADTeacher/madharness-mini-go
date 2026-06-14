@@ -8,8 +8,16 @@ import (
 )
 
 func applyPatch(ctx *tools.Context, args map[string]any) tools.Observation {
-	parser := Parser{ctx: ctx}
-	changes, err := parser.Prepare(tools.StringArg(args, "patch", ""))
+	patch := tools.StringArg(args, "patch", "")
+	paths, pathMap, err := touchedPaths(ctx, patch)
+	if err != nil {
+		summary := err.Error()
+		return tools.Fail("apply_patch", summary, failureData(summary))
+	}
+	release := ctx.LockWorkspaceWrite("apply_patch", paths...)
+	defer release()
+	parser := Parser{ctx: ctx, paths: pathMap}
+	changes, err := parser.Prepare(patch)
 	if err != nil {
 		summary := err.Error()
 		return tools.Fail("apply_patch", summary, failureData(summary))

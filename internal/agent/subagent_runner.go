@@ -5,23 +5,17 @@ import (
 	"strings"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
-	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/subagents"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/builtin"
-	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
-func runSubagent(
-	cfg *config.Config,
-	client chatClient,
-	parentTrace *trace.Trace,
+func (s *Session) Delegate(
 	subagent subagents.Subagent,
 	args map[string]any,
-	parentEvents *events.Bus,
-	options RunOptions,
 ) tools.Observation {
+	cfg := s.shared.cfg
 	task := strings.TrimSpace(tools.StringArg(args, "task", ""))
 	if task == "" {
 		return tools.Fail("delegate_task", "empty subagent task", map[string]any{"subagent": subagent.Name})
@@ -31,27 +25,28 @@ func runSubagent(
 	if err != nil {
 		return tools.Fail("delegate_task", err.Error(), map[string]any{"subagent": subagent.Name})
 	}
-	subTrace, err := parentTrace.Child("subagent", "subagent-"+subagent.Name)
+	subTrace, err := s.trace.Child("subagent", "subagent-"+subagent.Name)
 	if err != nil {
 		return tools.Fail("delegate_task", err.Error(), map[string]any{"subagent": subagent.Name})
 	}
 	tracePath := subagents.TracePathForObservation(subTrace.Path, cfg.CWD)
-	subEvents := parentEvents.WithTrace(subTrace)
+	subEvents := s.events.WithTrace(subTrace)
+	child := newSession(s.shared, subTrace, subEvents, "subagent")
 	publishEvent(subEvents, events.Event{Name: "session_start", Kind: "subagent", HookData: map[string]any{
 		"subagent":        subagent.Name,
 		"task_preview":    truncateForHook(task, 1000),
-		"parent_trace_id": parentTrace.ID,
+		"parent_trace_id": s.trace.ID,
 	}})
-	_ = parentTrace.Write("subagent_started", map[string]any{
+	_ = s.trace.Write("subagent_started", map[string]any{
 		"name":       subagent.Name,
 		"profile":    effectiveProfile(subagent, requestedProfile),
 		"trace_id":   subTrace.ID,
 		"trace_path": tracePath,
 	})
 
-	result, err := runSubagentLoop(cfg, client, subTrace, subagent, args, task, allowedTools, subEvents, options)
+	result, err := child.runSubagentLoop(subagent, args, task, allowedTools)
 	if err != nil {
-		_ = parentTrace.Write("subagent_failed", map[string]any{
+		_ = s.trace.Write("subagent_failed", map[string]any{
 			"name":       subagent.Name,
 			"trace_id":   subTrace.ID,
 			"trace_path": tracePath,
@@ -67,7 +62,7 @@ func runSubagent(
 	}
 	_ = subEvents.Close()
 	summary := subagents.SummarizeTrace(subTrace.Path)
-	_ = parentTrace.Write("subagent_finished", map[string]any{
+	_ = s.trace.Write("subagent_finished", map[string]any{
 		"name":          subagent.Name,
 		"status":        result.Status,
 		"trace_id":      subTrace.ID,
@@ -99,17 +94,13 @@ func runSubagent(
 	return tools.Fail("delegate_task", result.Result, base)
 }
 
-func runSubagentLoop(
-	cfg *config.Config,
-	client chatClient,
-	tr *trace.Trace,
+func (s *Session) runSubagentLoop(
 	subagent subagents.Subagent,
 	args map[string]any,
 	task string,
 	allowedTools []string,
-	eventBus *events.Bus,
-	options RunOptions,
 ) (loopResult, error) {
+	cfg := s.shared.cfg
 	contextMaxTokens := subagent.ContextMaxTokens
 	if contextMaxTokens == 0 {
 		contextMaxTokens = cfg.Data.SubagentContextMaxTokens
@@ -137,8 +128,9 @@ func runSubagentLoop(
 		Placement: "system",
 	})
 	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{
-		Approval:              approvalManagerForRun(cfg, options, eventBus, "subagent"),
-		Trace:                 tr,
+		Approval:              s.approvalManager("subagent"),
+		Trace:                 s.trace,
+		Scheduler:             s.shared.scheduler,
 		AllowedTools:          allowedTools,
 		WritableSuffixes:      subagentWritableSuffixes(subagent),
 		WriteScopeDescription: subagentWriteScopeDescription(subagent),
@@ -151,11 +143,10 @@ func runSubagentLoop(
 	if maxTurns == 0 {
 		maxTurns = cfg.Data.SubagentMaxTurns
 	}
-	return runModelLoop(client, tr, context, registry, maxTurns, loopOptions{
-		StopOnUserInput:      true,
-		Events:               eventBus,
-		Kind:                 "subagent",
-		MaxParallelToolCalls: cfg.Data.MaxParallelToolCalls,
+	return s.RunModelLoop(context, registry, maxTurns, loopOptions{
+		StopOnUserInput: true,
+		Events:          s.events,
+		Kind:            "subagent",
 	})
 }
 

@@ -8,3 +8,10 @@ func resolvedMaxParallelToolCalls(cfg *config.Config, options RunOptions) int {
 	}
 	return cfg.Data.MaxParallelToolCalls
 }
+
+func resolvedMaxParallelSubagents(cfg *config.Config, options RunOptions) int {
+	if options.MaxParallelSubagents > 0 {
+		return options.MaxParallelSubagents
+	}
+	return cfg.Data.MaxParallelSubagents
+}

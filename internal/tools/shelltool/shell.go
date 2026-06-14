@@ -70,6 +70,8 @@ func runShell(ctx *tools.Context, args map[string]any) tools.Observation {
 			_ = ctx.Trace.Write("skill_resource_used", mergeEvent(event, map[string]any{"tool": "run_shell"}))
 		}
 	}
+	release := ctx.LockWorkspaceExclusive("run_shell")
+	defer release()
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(timeoutCtx, argv[0], argv[1:]...)

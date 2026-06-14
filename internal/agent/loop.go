@@ -16,6 +16,7 @@ type loopOptions struct {
 	Events               *events.Bus
 	Kind                 string
 	MaxParallelToolCalls int
+	MaxParallelSubagents int
 }
 
 type loopResult struct {
@@ -36,6 +37,12 @@ func runModelLoop(
 	kind := options.Kind
 	if kind == "" {
 		kind = "run"
+	}
+	if options.MaxParallelToolCalls < 1 {
+		options.MaxParallelToolCalls = 1
+	}
+	if options.MaxParallelSubagents < 1 {
+		options.MaxParallelSubagents = 1
 	}
 	for turn := 0; turn < maxTurns; turn++ {
 		toolSchemas := registry.Schemas()
@@ -103,8 +110,8 @@ func runModelLoop(
 		}
 		tasks := prepareToolTasks(registry, calls, options.Events, kind, turn)
 		groups := turnexec.Plan(tasks)
-		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, groups)
-		results := turnexec.Execute(groups, options.MaxParallelToolCalls, func(task turnexec.Task) (tools.Observation, []map[string]any) {
+		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, options.MaxParallelSubagents, groups)
+		results := turnexec.Execute(groups, options.MaxParallelToolCalls, options.MaxParallelSubagents, func(task turnexec.Task) (tools.Observation, []map[string]any) {
 			return registry.CallWithFollowups(task.Name, task.Args)
 		})
 		if result, stopped := commitToolResults(results, context, tr, options, kind, turn); stopped {

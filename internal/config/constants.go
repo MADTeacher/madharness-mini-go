@@ -34,6 +34,7 @@ func DefaultSettings() Settings {
 		Temperature:              0.2,
 		MaxTurns:                 50,
 		MaxParallelToolCalls:     1,
+		MaxParallelSubagents:     1,
 		ContextMaxTokens:         60000,
 		ContextKeepRecentTurns:   3,
 		WorkspaceRoot:            ".",

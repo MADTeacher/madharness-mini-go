@@ -12,6 +12,7 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
 	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
@@ -98,7 +99,7 @@ func TestEnvFileOverridesOrchestrationSettings(t *testing.T) {
 	cleanEnv(t)
 	root := t.TempDir()
 	mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
-	env := "MADHARNESS_MINI_ORCHESTRATION_ENABLED=false\nMADHARNESS_MINI_ORCHESTRATION_MODE=requested\nMADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS=3\n"
+	env := "MADHARNESS_MINI_ORCHESTRATION_ENABLED=false\nMADHARNESS_MINI_ORCHESTRATION_MODE=requested\nMADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS=3\nMADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS=2\n"
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +113,9 @@ func TestEnvFileOverridesOrchestrationSettings(t *testing.T) {
 	}
 	if cfg.Data.MaxParallelToolCalls != 3 {
 		t.Fatalf("max_parallel_tool_calls = %d", cfg.Data.MaxParallelToolCalls)
+	}
+	if cfg.Data.MaxParallelSubagents != 2 {
+		t.Fatalf("max_parallel_subagents = %d", cfg.Data.MaxParallelSubagents)
 	}
 }
 
@@ -136,7 +140,7 @@ func TestEnvFileOverridesApprovalSettings(t *testing.T) {
 func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
 	cleanEnv(t)
 	root := t.TempDir()
-	mustWriteConfig(t, root, map[string]any{"max_parallel_tool_calls": 0})
+	mustWriteConfig(t, root, map[string]any{"max_parallel_tool_calls": 0, "max_parallel_subagents": 0})
 
 	cfg, err := New(root)
 	if err != nil {
@@ -144,6 +148,9 @@ func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
 	}
 	if cfg.Data.MaxParallelToolCalls != 1 {
 		t.Fatalf("max_parallel_tool_calls = %d", cfg.Data.MaxParallelToolCalls)
+	}
+	if cfg.Data.MaxParallelSubagents != 1 {
+		t.Fatalf("max_parallel_subagents = %d", cfg.Data.MaxParallelSubagents)
 	}
 }
 
@@ -154,6 +161,7 @@ func TestEnvFileRejectsInvalidImageSettings(t *testing.T) {
 		"detail":        "MADHARNESS_MINI_IMAGE_DETAIL=microscope\n",
 		"orchestration": "MADHARNESS_MINI_ORCHESTRATION_MODE=surprise\n",
 		"approval":      "MADHARNESS_MINI_APPROVAL_MODE=surprise\n",
+		"subagents":     "MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS=-1\n",
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {

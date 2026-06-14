@@ -7,6 +7,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
+	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
 // Registry хранит инструменты в стабильном порядке и вызывает handlers по имени.
@@ -23,6 +24,7 @@ type RegistryOptions struct {
 	Approval              *approval.Manager
 	Trace                 TraceWriter
 	ResourceTracker       ResourceTracker
+	Scheduler             *workspace.Scheduler
 	AllowedTools          []string
 	WritableSuffixes      []string
 	WriteScopeDescription string
@@ -41,6 +43,7 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 		Approval:              options.Approval,
 		Trace:                 options.Trace,
 		ResourceTracker:       options.ResourceTracker,
+		Scheduler:             options.Scheduler,
 		WritableSuffixes:      normalizeSuffixes(options.WritableSuffixes),
 		WriteScopeDescription: options.WriteScopeDescription,
 	}

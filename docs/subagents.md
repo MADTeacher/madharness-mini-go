@@ -10,6 +10,10 @@
 ведущего агента не копируется целиком; в делегацию попадают только задача и
 короткий `context`, который ведущий агент передал в `delegate_task`.
 
+Внутри runtime главный агент и каждый субагент представлены отдельной
+agent session. Сессии разделяют config, model client, hook providers, approval
+prompt guard и workspace scheduler, но не разделяют историю контекста.
+
 ## Встроенные роли
 
 Встроенные субагенты лежат в пакете:
@@ -144,6 +148,12 @@ Observation `delegate_task` содержит:
 | `subagent_trace_id` | Идентификатор локального trace субагента. |
 | `subagent_trace_path` | Путь к локальному trace относительно рабочей папки, если это возможно. |
 
+Соседние `delegate_task` внутри одного ответа модели могут выполняться
+параллельно, если `max_parallel_subagents` больше `1`. Parent-agent всё равно
+получает observations в исходном порядке tool calls. Если один субагент просит
+ввод пользователя, harness дожидается уже запущенных sibling-субагентов и затем
+завершает parent run вопросом.
+
 ## Трассы
 
 Родительский запуск пишет события:
@@ -196,6 +206,7 @@ go run ./cmd/madharness-mini subagents validate
 | --- | --- | --- |
 | `orchestration_enabled` | `true` | Устаревший общий выключатель; `false` отключает `delegate_task`, если `orchestration_mode` оставлен в `auto`. |
 | `orchestration_mode` | `auto` | Режим доступности оркестрации: `off`, `requested`, `auto`, `required`. |
+| `max_parallel_subagents` | `1` | Сколько соседних `delegate_task` parent-session может запускать одновременно. |
 | `subagent_max_turns` | `10` | Лимит ходов субагента без собственного `max_turns`. |
 | `subagent_context_max_tokens` | `30000` | Контекстный бюджет субагента без собственного `context_max_tokens`. |
 
@@ -206,12 +217,14 @@ go run ./cmd/madharness-mini run --no-orchestrate "..."
 go run ./cmd/madharness-mini run --orchestrate "..."
 go run ./cmd/madharness-mini run --orchestration requested "..."
 go run ./cmd/madharness-mini run --orchestrate-required "..."
+go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 ```
 
 То же можно задать в `.env`:
 
 ```text
 MADHARNESS_MINI_ORCHESTRATION_MODE=requested
+MADHARNESS_MINI_MAX_PARALLEL_SUBAGENTS=2
 ```
 
 ## Безопасность
@@ -220,6 +233,10 @@ MADHARNESS_MINI_ORCHESTRATION_MODE=requested
 могут выйти за `workspace_root` и не могут трогать `protected_paths`.
 Shell-команды проходят обычную проверку `run_shell`: запрещены управляющие
 операторы shell и явно рискованные команды.
+
+Файловые и shell tools всех сессий проходят через общий workspace scheduler:
+чтения получают read lock, записи и `apply_patch` - write lock на затронутые
+пути, а `run_shell` - global exclusive lock на время subprocess.
 
 Project-local субагенты читаются только из `.madharness-mini/subagents/*.md`.
 Они не получают особых прав на файловую систему: даже writable-роль может

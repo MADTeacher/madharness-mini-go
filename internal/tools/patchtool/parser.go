@@ -17,6 +17,7 @@ type Change struct {
 // Parser валидирует patch целиком до записи на диск.
 type Parser struct {
 	ctx     *tools.Context
+	paths   map[string]string
 	seen    map[string]bool
 	changes []Change
 }
@@ -63,6 +64,11 @@ func splitPatchLines(patch string) []string {
 }
 
 func (p *Parser) patchPath(raw string) (string, error) {
+	if p.paths != nil {
+		if path, ok := p.paths[raw]; ok {
+			return path, nil
+		}
+	}
 	if scopeError := p.ctx.WritePathError(raw); scopeError != "" {
 		return "", fmt.Errorf("%s", scopeError)
 	}

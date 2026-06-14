@@ -22,6 +22,7 @@ import (
 type RunOptions struct {
 	OrchestrationMode    string
 	MaxParallelToolCalls int
+	MaxParallelSubagents int
 	ApprovalMode         string
 	YoloMode             bool
 	ApprovalPrompter     approval.Prompter
@@ -53,7 +54,9 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	}
 	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
 	defer eventBus.Close()
-	approvalManager := approvalManagerForRun(cfg, options, eventBus, "run")
+	shared := newSessionShared(cfg, client, options)
+	session := newSession(shared, tr, eventBus, "run")
+	approvalManager := session.approvalManager("run")
 	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "run", HookData: map[string]any{
 		"task_preview": truncateForHook(task, 1000),
 		"cwd":          cfg.CWD,
@@ -110,7 +113,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
 			Index: subagentIndex,
 			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
-				return runSubagent(cfg, client, tr, subagent, args, eventBus, options)
+				return session.Delegate(subagent, args)
 			},
 		})
 	}
@@ -121,6 +124,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		Approval:        approvalManager,
 		Trace:           tr,
 		ResourceTracker: runtime,
+		Scheduler:       shared.scheduler,
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {
@@ -148,10 +152,11 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		}
 		applyHiddenObservationEffects(context, tr, obs)
 	}
-	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{
+	result, err := session.RunModelLoop(context, registry, cfg.Data.MaxTurns, loopOptions{
 		Events:               eventBus,
 		Kind:                 "run",
 		MaxParallelToolCalls: resolvedMaxParallelToolCalls(cfg, options),
+		MaxParallelSubagents: resolvedMaxParallelSubagents(cfg, options),
 	})
 	return result.Result, tr.Path, err
 }

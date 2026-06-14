@@ -45,6 +45,12 @@ go run ./cmd/madharness-mini run "Найди команду для запуск�
 go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "Найди документацию про конкурентность"
 ```
 
+Для параллельного запуска соседних `delegate_task`:
+
+```bash
+go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "Поручи двум субагентам независимую проверку"
+```
+
 Для явного подтверждения эскалируемого policy-отказа в CLI:
 
 ```bash
