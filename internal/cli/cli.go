@@ -86,14 +86,11 @@ func runAsk(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Write
 func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	orchestration := fs.String("orchestration", "", "orchestration mode: off, requested, auto, required")
-	noOrchestrate := fs.Bool("no-orchestrate", false, "do not show delegate_task to the parent agent")
-	orchestrate := fs.Bool("orchestrate", false, "make delegate_task available to the parent agent")
-	orchestrateRequired := fs.Bool("orchestrate-required", false, "strict mode: parent coordinates work through subagents")
+	runFlags := registerRunFlags(fs)
 	if err := fs.Parse(argv); err != nil {
 		return 2
 	}
-	mode, err := selectedOrchestrationMode(*orchestration, *noOrchestrate, *orchestrate, *orchestrateRequired)
+	options, err := runFlags.options()
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -102,7 +99,7 @@ func runAgent(argv []string, cfg *config.Config, stdout io.Writer, stderr io.Wri
 	if !ok {
 		return 2
 	}
-	result, tracePath, err := agent.RunWithOptions(task, cfg, agent.RunOptions{OrchestrationMode: mode})
+	result, tracePath, err := agent.RunWithOptions(task, cfg, options)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1

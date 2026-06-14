@@ -39,6 +39,12 @@ go run ./cmd/madharness-mini ask "Объясни, что делает этот �
 go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
 ```
 
+Для параллельного выполнения соседних read-only tools внутри одного turn-а:
+
+```bash
+go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "Найди документацию про конкурентность"
+```
+
 Посмотрите трассу:
 
 ```bash

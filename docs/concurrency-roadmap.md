@@ -10,6 +10,12 @@
 одного assistant-turn. По умолчанию значение равно `1`, поэтому старые запуски
 ведут себя последовательно.
 
+Разово для запуска лимит можно переопределить CLI-флагом:
+
+```bash
+go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "..."
+```
+
 Параллельно могут выполняться только соседние read-only tools:
 
 - `list_files`;
@@ -31,6 +37,11 @@
 handler-ов. После выполнения handlers harness применяет observations, hidden
 effects, trace events и `RecordToolResult()` строго в исходном порядке
 `tool_calls`, даже если read-only handlers завершились в другом порядке.
+
+Перед выполнением tools harness пишет `tool_execution_plan` в trace: лимит,
+группы выполнения, имена tools и классы effects. Команда `trace` показывает
+краткую строку `concurrency` с max parallel, количеством read batches и
+barrier-групп.
 
 ## Future work
 

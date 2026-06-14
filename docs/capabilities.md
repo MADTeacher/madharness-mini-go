@@ -16,6 +16,13 @@
 
 При локальной разработке команда запускается как `go run ./cmd/madharness-mini`.
 
+Для одного запуска `run` можно включить ограниченный параллелизм read-only
+tools:
+
+```bash
+go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "..."
+```
+
 ## Hooks
 
 Hooks настраиваются в:

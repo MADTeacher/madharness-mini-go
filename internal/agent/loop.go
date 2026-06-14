@@ -93,7 +93,9 @@ func runModelLoop(
 			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
 		tasks := prepareToolTasks(registry, calls, options.Hooks, kind, turn)
-		results := turnexec.Execute(turnexec.Plan(tasks), options.MaxParallelToolCalls, func(task turnexec.Task) (tools.Observation, []map[string]any) {
+		groups := turnexec.Plan(tasks)
+		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, groups)
+		results := turnexec.Execute(groups, options.MaxParallelToolCalls, func(task turnexec.Task) (tools.Observation, []map[string]any) {
 			return registry.CallWithFollowups(task.Name, task.Args)
 		})
 		if result, stopped := commitToolResults(results, context, tr, options, kind, turn); stopped {

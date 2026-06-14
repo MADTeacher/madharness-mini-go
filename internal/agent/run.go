@@ -18,7 +18,8 @@ import (
 
 // RunOptions задаёт режимы одного запуска run.
 type RunOptions struct {
-	OrchestrationMode string
+	OrchestrationMode    string
+	MaxParallelToolCalls int
 }
 
 // Run запускает агентский цикл до финального ответа или max_turns.
@@ -141,7 +142,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{
 		Hooks:                hookManager,
 		Kind:                 "run",
-		MaxParallelToolCalls: cfg.Data.MaxParallelToolCalls,
+		MaxParallelToolCalls: resolvedMaxParallelToolCalls(cfg, options),
 	})
 	return result.Result, tr.Path, err
 }
