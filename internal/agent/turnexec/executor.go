@@ -4,20 +4,46 @@ import "sync"
 
 // Execute запускает группы по порядку, а read/delegate batches - конкурентно с лимитами.
 func Execute(groups []Group, maxParallelTools int, maxParallelSubagents int, handler Handler) []Result {
+	results, _ := ExecuteUntil(groups, maxParallelTools, maxParallelSubagents, handler, nil)
+	return results
+}
+
+// ExecuteUntil запускает группы по порядку и останавливается после result,
+// который владелец loop-а считает терминальным для текущего turn-а.
+func ExecuteUntil(
+	groups []Group,
+	maxParallelTools int,
+	maxParallelSubagents int,
+	handler Handler,
+	shouldStop func(Result) bool,
+) ([]Result, bool) {
 	maxParallelTools = normalizedLimit(maxParallelTools)
 	maxParallelSubagents = normalizedLimit(maxParallelSubagents)
 	results := []Result{}
 	for _, group := range groups {
 		limit := groupLimit(group, maxParallelTools, maxParallelSubagents)
+		groupResults := []Result{}
 		if group.Parallel && len(group.Tasks) > 1 && limit > 1 {
-			results = append(results, executeParallel(group.Tasks, limit, handler)...)
-			continue
+			groupResults = executeParallel(group.Tasks, limit, handler)
+		} else {
+			for _, task := range group.Tasks {
+				groupResults = append(groupResults, executeOne(task, handler))
+				if shouldStop != nil && shouldStop(groupResults[len(groupResults)-1]) {
+					results = append(results, groupResults...)
+					return results, true
+				}
+			}
 		}
-		for _, task := range group.Tasks {
-			results = append(results, executeOne(task, handler))
+		results = append(results, groupResults...)
+		if shouldStop != nil {
+			for _, result := range groupResults {
+				if shouldStop(result) {
+					return results, true
+				}
+			}
 		}
 	}
-	return results
+	return results, false
 }
 
 func normalizedLimit(value int) int {

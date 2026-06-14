@@ -1,6 +1,7 @@
 package turnexec
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,36 @@ func TestExecuteUsesSubagentLimitForDelegateBatch(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("delegate batch did not finish")
+	}
+}
+
+func TestExecuteUntilStopsBeforeLaterBarrier(t *testing.T) {
+	tasks := []Task{
+		{Index: 0, Name: "ask_user", Effect: tools.EffectState, Runnable: true},
+		{Index: 1, Name: "write_file", Effect: tools.EffectWrite, Runnable: true},
+	}
+	called := []string{}
+
+	results, stopped := ExecuteUntil(Plan(tasks), 1, 1, func(task Task) (tools.Observation, []map[string]any) {
+		called = append(called, task.Name)
+		obs := tools.OK(task.Name, "done", nil)
+		if task.Name == "ask_user" {
+			obs["_subagent_stop"] = "needs_user_input"
+		}
+		return obs, nil
+	}, func(result Result) bool {
+		value, _ := result.Observation["_subagent_stop"].(string)
+		return value == "needs_user_input"
+	})
+
+	if !stopped {
+		t.Fatal("expected execution to stop")
+	}
+	if strings.Join(called, ",") != "ask_user" {
+		t.Fatalf("called = %v", called)
+	}
+	if len(results) != 1 || results[0].Task.Name != "ask_user" {
+		t.Fatalf("results = %+v", results)
 	}
 }
 

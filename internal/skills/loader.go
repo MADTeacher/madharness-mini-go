@@ -19,7 +19,10 @@ var skillRoots = []struct {
 	priority int
 }{
 	{path: ".agents/skills", source: "agents", priority: 10},
+	// Старый путь с подчёркиванием оставляем как мягкую совместимость,
+	// но задокументированный путь с дефисом должен побеждать при дублях.
 	{path: ".madharness_mini/skills", source: "native", priority: 20},
+	{path: ".madharness-mini/skills", source: "native", priority: 30},
 }
 
 type rankedSkill struct {

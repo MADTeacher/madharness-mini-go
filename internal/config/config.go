@@ -79,6 +79,19 @@ func (c *Config) normalize() {
 	}
 }
 
+func (c *Config) persistentSettings() (Settings, error) {
+	cfg := &Config{
+		CWD:      c.CWD,
+		StateDir: c.StateDir,
+		Data:     DefaultSettings(),
+	}
+	if err := cfg.loadFile(); err != nil {
+		return Settings{}, err
+	}
+	cfg.normalize()
+	return cfg.Data, nil
+}
+
 func (c *Config) loadFile() error {
 	path := filepath.Join(c.StateDir, "config.json")
 	data, err := os.ReadFile(path)
@@ -120,7 +133,11 @@ func (c *Config) EnsureDirs() error {
 	}
 	path := filepath.Join(c.StateDir, "config.json")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return c.writeConfig(path, c.Data)
+		data, err := c.persistentSettings()
+		if err != nil {
+			return err
+		}
+		return c.writeConfig(path, data)
 	} else if err != nil {
 		return err
 	}

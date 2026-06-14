@@ -76,6 +76,15 @@ func TestDiscoverRejectsInvalidSubagentFrontmatter(t *testing.T) {
 			"---",
 			"body",
 		}, "\n"),
+		"unknown-tool.md": strings.Join([]string{
+			"---",
+			"name: unknown-tool",
+			"description: Unknown tool.",
+			"profile: writable",
+			`tools: ["list_files", "no_such_tool"]`,
+			"---",
+			"body",
+		}, "\n"),
 		"duplicate.md": strings.Join([]string{
 			"---",
 			"name: duplicate",
@@ -94,12 +103,12 @@ func TestDiscoverRejectsInvalidSubagentFrontmatter(t *testing.T) {
 
 	index := Discover(cfg)
 
-	for _, name := range []string{"bad-tools", "bad-profile", "bad-delegate", "duplicate"} {
+	for _, name := range []string{"bad-tools", "bad-profile", "bad-delegate", "unknown-tool", "duplicate"} {
 		if _, ok := index.Subagents[name]; ok {
 			t.Fatalf("%s should not be loaded", name)
 		}
 	}
-	for _, want := range []string{"JSON-style list", "invalid profile", "delegate_task is not allowed", "duplicate tool"} {
+	for _, want := range []string{"JSON-style list", "invalid profile", "not exposed to subagents", "unknown subagent tool", "duplicate tool"} {
 		if !hasDiagnostic(index.Diagnostics, "error", want) {
 			t.Fatalf("missing diagnostic %q in %+v", want, index.Diagnostics)
 		}
@@ -107,17 +116,54 @@ func TestDiscoverRejectsInvalidSubagentFrontmatter(t *testing.T) {
 }
 
 func TestEffectiveToolsDowngradesButDoesNotUpgrade(t *testing.T) {
-	writable := Subagent{Name: "writer", Profile: "writable", Tools: []string{"list_files", "write_file", "run_shell"}}
+	writable := Subagent{Name: "writer", Profile: "writable", Tools: []string{"list_files", "write_file", "run_shell", "start_shell", "shell_status", "stop_shell", "ask_user"}}
 	tools, err := EffectiveTools(writable, "read-only")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(tools, ",") != "list_files" {
+	if strings.Join(tools, ",") != "list_files,ask_user" {
 		t.Fatalf("tools = %v", tools)
 	}
 	readOnly := Subagent{Name: "reader", Profile: "read-only", Tools: []string{"list_files"}}
 	if _, err := EffectiveTools(readOnly, "writable"); err == nil {
 		t.Fatal("expected upgrade error")
+	}
+}
+
+func TestChangedFilesFromEventsUsesOnlySuccessfulWrites(t *testing.T) {
+	patch := strings.Join([]string{
+		"*** Begin Patch",
+		"*** Update File: failed.txt",
+		"@@",
+		"-old",
+		"+new",
+		"*** End Patch",
+	}, "\n")
+	events := []map[string]any{
+		{
+			"event":       "tool_observation",
+			"tool":        "write_file",
+			"args":        map[string]any{"path": "failed-write.txt"},
+			"observation": map[string]any{"ok": false},
+		},
+		{
+			"event":       "tool_observation",
+			"tool":        "apply_patch",
+			"args":        map[string]any{"patch": patch},
+			"observation": map[string]any{"ok": false},
+		},
+		{
+			"event":       "tool_observation",
+			"tool":        "write_file",
+			"args":        map[string]any{"path": "ok.txt"},
+			"observation": map[string]any{"ok": true},
+		},
+	}
+
+	changed := ChangedFilesFromEvents(events)
+
+	if strings.Join(changed, ",") != "ok.txt" {
+		t.Fatalf("changed files = %v", changed)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 )
 
+const readFileMaxBytes = 1 * 1024 * 1024
+
 // Specs возвращает list/read/write file tools.
 func Specs() []tools.Spec {
 	return []tools.Spec{listFilesSpec(), readFileSpec(), writeFileSpec()}
@@ -90,18 +92,14 @@ func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 	}
 	release := ctx.LockWorkspaceRead("read_file", path)
 	defer release()
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	raw, _, truncated, err := tools.ReadRegularFilePrefix(path, readFileMaxBytes)
+	if err != nil {
 		return tools.Fail("read_file", "not a file: "+rawPath)
 	}
 	if ctx.Trace != nil && ctx.ResourceTracker != nil {
 		if event := ctx.ResourceTracker.ResourceEvent(path); event != nil {
 			_ = ctx.Trace.Write("skill_resource_used", mergeEvent(event, map[string]any{"tool": "read_file"}))
 		}
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return tools.Fail("read_file", err.Error())
 	}
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
@@ -114,9 +112,10 @@ func readFile(ctx *tools.Context, args map[string]any) tools.Observation {
 		excerpt = append(excerpt, fmt.Sprintf("%d: %s", i, lines[i-1]))
 	}
 	return tools.OK("read_file", fmt.Sprintf("read %s:%d-%d", rawPath, start, end), map[string]any{
-		"content": tools.Clipped(strings.Join(excerpt, "\n"), tools.MaxOutput),
-		"start":   start,
-		"end":     end,
+		"content":   tools.Clipped(strings.Join(excerpt, "\n"), tools.MaxOutput),
+		"start":     start,
+		"end":       end,
+		"truncated": truncated,
 	})
 }
 

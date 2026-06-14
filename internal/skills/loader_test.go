@@ -9,10 +9,10 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 )
 
-func TestDiscoverReadsFrontmatterAndNativeOverridesAgents(t *testing.T) {
+func TestDiscoverReadsFrontmatterAndHyphenNativeOverridesAgents(t *testing.T) {
 	cfg := testConfig(t)
 	writeSkill(t, filepath.Join(cfg.Root, ".agents", "skills", "docs-writer"), "docs-writer", "Агентская версия.")
-	writeSkill(t, filepath.Join(cfg.Root, ".madharness_mini", "skills", "docs-writer"), "docs-writer", "Нативная версия.")
+	writeSkill(t, filepath.Join(cfg.Root, ".madharness-mini", "skills", "docs-writer"), "docs-writer", "Нативная версия.")
 
 	index := Discover(cfg)
 
@@ -23,11 +23,48 @@ func TestDiscoverReadsFrontmatterAndNativeOverridesAgents(t *testing.T) {
 	if skill.Source != "native" || skill.Description != "Нативная версия." {
 		t.Fatalf("skill = %+v", skill)
 	}
+	if skill.RootLocation(cfg.Root) != ".madharness-mini/skills/docs-writer" {
+		t.Fatalf("root location = %q", skill.RootLocation(cfg.Root))
+	}
 	if skill.Metadata["author"] != "test" {
 		t.Fatalf("metadata = %+v", skill.Metadata)
 	}
 	if strings.Join(skill.AllowedTools, " ") != "read_file run_shell" {
 		t.Fatalf("allowed tools = %v", skill.AllowedTools)
+	}
+	if !hasDiagnostic(index.Diagnostics, "shadowed") {
+		t.Fatalf("diagnostics = %+v", index.Diagnostics)
+	}
+}
+
+func TestDiscoverLoadsLegacyUnderscoreNativePath(t *testing.T) {
+	cfg := testConfig(t)
+	writeSkill(t, filepath.Join(cfg.Root, ".madharness_mini", "skills", "legacy-only"), "legacy-only", "Старая нативная версия.")
+
+	index := Discover(cfg)
+
+	skill := index.Skills["legacy-only"]
+	if skill.Source != "native" || skill.Description != "Старая нативная версия." {
+		t.Fatalf("skill = %+v", skill)
+	}
+	if skill.RootLocation(cfg.Root) != ".madharness_mini/skills/legacy-only" {
+		t.Fatalf("root location = %q", skill.RootLocation(cfg.Root))
+	}
+}
+
+func TestDiscoverHyphenNativeOverridesLegacyUnderscorePath(t *testing.T) {
+	cfg := testConfig(t)
+	writeSkill(t, filepath.Join(cfg.Root, ".madharness_mini", "skills", "docs-writer"), "docs-writer", "Старая нативная версия.")
+	writeSkill(t, filepath.Join(cfg.Root, ".madharness-mini", "skills", "docs-writer"), "docs-writer", "Документированный путь.")
+
+	index := Discover(cfg)
+
+	skill := index.Skills["docs-writer"]
+	if skill.Description != "Документированный путь." {
+		t.Fatalf("skill = %+v", skill)
+	}
+	if skill.RootLocation(cfg.Root) != ".madharness-mini/skills/docs-writer" {
+		t.Fatalf("root location = %q", skill.RootLocation(cfg.Root))
 	}
 	if !hasDiagnostic(index.Diagnostics, "shadowed") {
 		t.Fatalf("diagnostics = %+v", index.Diagnostics)

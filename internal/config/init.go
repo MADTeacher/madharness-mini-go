@@ -24,7 +24,10 @@ func (c *Config) Initialize(opts InitOptions) (string, []string, error) {
 	} else if err != nil {
 		return "", nil, err
 	}
-	data := c.Data
+	data, err := c.persistentSettings()
+	if err != nil {
+		return "", nil, err
+	}
 	if opts.Model != "" && data.Model != opts.Model {
 		data.Model = opts.Model
 		changes = append(changes, "model")

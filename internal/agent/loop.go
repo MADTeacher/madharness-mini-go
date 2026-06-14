@@ -114,9 +114,15 @@ func runModelLoop(
 		tasks := prepareToolTasks(registry, calls, options.Events, kind, turn, tr, turnSpan.ID())
 		groups := turnexec.Plan(tasks)
 		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, options.MaxParallelSubagents, groups)
-		results := turnexec.Execute(groups, options.MaxParallelToolCalls, options.MaxParallelSubagents, func(task turnexec.Task) (tools.Observation, []map[string]any) {
+		handler := func(task turnexec.Task) (tools.Observation, []map[string]any) {
 			return registry.CallWithFollowupsInSpan(task.Name, task.Args, task.SpanID, stringFromAny(task.Call["id"]))
+		}
+		results, executionStopped := turnexec.ExecuteUntil(groups, options.MaxParallelToolCalls, options.MaxParallelSubagents, handler, func(result turnexec.Result) bool {
+			return shouldStopToolExecution(result.Observation, options)
 		})
+		if executionStopped {
+			endSkippedToolSpans(tasks, results)
+		}
 		if result, stopped := commitToolResults(results, context, tr, options, kind, turn); stopped {
 			turnSpan.End(result.Status, nil)
 			return result, nil
@@ -185,6 +191,29 @@ func isParentUserInputRequest(observation tools.Observation) bool {
 	return stringObservationField(observation, "tool") == "delegate_task" &&
 		stringObservationField(observation, "status") == "needs_user_input" &&
 		strings.TrimSpace(stringObservationField(observation, "question")) != ""
+}
+
+func shouldStopToolExecution(observation tools.Observation, options loopOptions) bool {
+	if options.StopOnUserInput && stringObservationField(observation, "_subagent_stop") == "needs_user_input" {
+		return true
+	}
+	return isParentUserInputRequest(observation)
+}
+
+func endSkippedToolSpans(tasks []turnexec.Task, results []turnexec.Result) {
+	executed := map[int]bool{}
+	for _, result := range results {
+		executed[result.Task.Index] = true
+	}
+	for _, task := range tasks {
+		if executed[task.Index] || task.EndSpan == nil {
+			continue
+		}
+		task.EndSpan("skipped", map[string]any{
+			"tool":    task.Name,
+			"summary": "skipped after user input request",
+		})
+	}
 }
 
 func renderUserInputRequest(observation tools.Observation) string {

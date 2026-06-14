@@ -8,11 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 )
 
@@ -74,12 +74,13 @@ func runShell(ctx *tools.Context, args map[string]any) tools.Observation {
 	defer release()
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(timeoutCtx, argv[0], argv[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	processes.PrepareCommand(cmd)
 	cmd.Dir = cwd
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err = runCommand(timeoutCtx, cmd)
 	returncode := -1
 	if cmd.ProcessState != nil {
 		returncode = cmd.ProcessState.ExitCode()
@@ -105,7 +106,7 @@ func runShell(ctx *tools.Context, args map[string]any) tools.Observation {
 }
 
 func commandArgv(command string, decisionCode string) ([]string, bool, error) {
-	if decisionCode == policy.CodeShellControlOperator || hasShellControlOperator(command) {
+	if decisionCode == policy.CodeShellControlOperator || policy.HasShellControlOperator(command) {
 		if runtime.GOOS == "windows" {
 			return []string{"cmd", "/C", command}, true, nil
 		}
@@ -115,13 +116,29 @@ func commandArgv(command string, decisionCode string) ([]string, bool, error) {
 	return argv, false, err
 }
 
-func hasShellControlOperator(command string) bool {
-	for _, token := range []string{"|", ">", "<", "&&", "||", ";"} {
-		if strings.Contains(command, token) {
-			return true
+func runCommand(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Wait()
+		processes.CleanupCommand(cmd)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return <-errCh
+	case <-ctx.Done():
+		processes.StopCommand(cmd, done, 2*time.Second)
+		select {
+		case err := <-errCh:
+			return err
+		default:
+			return ctx.Err()
 		}
 	}
-	return false
 }
 
 func itoa(value int) string {

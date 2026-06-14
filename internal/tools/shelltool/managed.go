@@ -127,6 +127,9 @@ func startShell(ctx *tools.Context, args map[string]any) tools.Observation {
 		if errors.Is(err, processes.ErrExitedBeforeReady) {
 			return tools.Fail("start_shell", "process exited before readiness", data)
 		}
+		if errors.Is(err, processes.ErrReadyTimeout) {
+			return tools.Fail("start_shell", "process readiness timeout", data)
+		}
 		return tools.Fail("start_shell", err.Error(), data)
 	}
 	return tools.OK("start_shell", startSummary(status), data)

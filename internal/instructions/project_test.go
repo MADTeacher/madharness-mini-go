@@ -86,6 +86,35 @@ func TestLoadProjectLimitsBytes(t *testing.T) {
 	}
 }
 
+func TestLoadProjectRejectsSymlinkOutsideWorkspace(t *testing.T) {
+	cfg := testInstructionsConfig(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "AGENTS.md"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, filepath.Join(outside, "AGENTS.md"), filepath.Join(cfg.Root, "AGENTS.md"))
+
+	text, err := LoadProject(cfg)
+
+	if err == nil || text != "" || !strings.Contains(err.Error(), "outside workspace") {
+		t.Fatalf("text=%q err=%v", text, err)
+	}
+}
+
+func TestLoadProjectRejectsSymlinkProtectedPath(t *testing.T) {
+	cfg := testInstructionsConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.Root, ".env"), []byte("SECRET=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, ".env", filepath.Join(cfg.Root, "AGENTS.md"))
+
+	text, err := LoadProject(cfg)
+
+	if err == nil || text != "" || !strings.Contains(err.Error(), "protected path") {
+		t.Fatalf("text=%q err=%v", text, err)
+	}
+}
+
 func testInstructionsConfig(t *testing.T) *config.Config {
 	t.Helper()
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
@@ -116,5 +145,12 @@ func writeConfig(t *testing.T, root string, data map[string]any) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func mustSymlink(t *testing.T, oldname string, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlink is not available: %v", err)
 	}
 }

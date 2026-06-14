@@ -2,7 +2,9 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,9 +13,10 @@ import (
 
 // Policy решает, какие пути и команды доступны агенту в текущем workspace.
 type Policy struct {
-	cfg       *config.Config
-	root      string
-	protected []string
+	cfg          *config.Config
+	root         string
+	resolvedRoot string
+	protected    []string
 }
 
 // PathDecision добавляет к решению нормализованный путь внутри workspace.
@@ -24,7 +27,12 @@ type PathDecision struct {
 
 // New создаёт policy из эффективной конфигурации запуска.
 func New(cfg *config.Config) *Policy {
-	return &Policy{cfg: cfg, root: filepath.Clean(cfg.Root), protected: cfg.Data.ProtectedPaths}
+	root := filepath.Clean(cfg.Root)
+	resolvedRoot := root
+	if realRoot, err := filepath.EvalSymlinks(root); err == nil {
+		resolvedRoot = filepath.Clean(realRoot)
+	}
+	return &Policy{cfg: cfg, root: root, resolvedRoot: resolvedRoot, protected: cfg.Data.ProtectedPaths}
 }
 
 // SafePath возвращает абсолютный путь внутри workspace или причину отказа.
@@ -50,7 +58,15 @@ func (p *Policy) SafePathDecision(raw string) PathDecision {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return PathDecision{Decision: deny(CodePathOutsideWorkspace, "path outside workspace: "+raw, false)}
 	}
-	if p.isProtected(path, rel) {
+	resolved, err := resolvePathForDecision(path)
+	if err != nil {
+		return PathDecision{Decision: deny(CodePathOutsideWorkspace, "path cannot be resolved safely: "+raw+": "+err.Error(), false)}
+	}
+	resolvedRel, err := filepath.Rel(p.resolvedRoot, resolved)
+	if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
+		return PathDecision{Decision: deny(CodePathOutsideWorkspace, "path outside workspace: "+raw, false)}
+	}
+	if p.isProtected(path, rel) || p.isProtected(resolved, resolvedRel) {
 		return PathDecision{Decision: deny(CodeProtectedPath, "protected path: "+raw, true), Path: path}
 	}
 	return PathDecision{Decision: allow(), Path: path}
@@ -90,7 +106,17 @@ func (p *Policy) isProtected(path string, rel string) bool {
 			}
 			continue
 		}
-		name := filepath.Base(strings.Trim(item, "/"))
+		cleaned := filepath.Clean(expanded)
+		if cleaned == "." {
+			continue
+		}
+		if strings.Contains(cleaned, string(filepath.Separator)) {
+			if rel == cleaned || strings.HasPrefix(rel, cleaned+string(filepath.Separator)) {
+				return true
+			}
+			continue
+		}
+		name := filepath.Base(strings.Trim(cleaned, "/"))
 		for _, part := range parts {
 			if name != "" && part == name {
 				return true
@@ -103,4 +129,38 @@ func (p *Policy) isProtected(path string, rel string) bool {
 func pathWithin(path string, root string) bool {
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func resolvePathForDecision(path string) (string, error) {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	current := path
+	missing := []string{}
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }

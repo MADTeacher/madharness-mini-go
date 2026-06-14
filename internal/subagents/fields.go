@@ -33,9 +33,7 @@ func parseTools(raw any, location string, diagnostics *[]Diagnostic) []string {
 		if seen[name] {
 			*diagnostics = append(*diagnostics, Diagnostic{"error", location, "duplicate tool in tools"})
 		}
-		if name == "delegate_task" {
-			*diagnostics = append(*diagnostics, Diagnostic{"error", location, "delegate_task is not allowed inside subagent tools"})
-		}
+		validateToolName(name, location, diagnostics)
 		seen[name] = true
 		out = append(out, name)
 	}

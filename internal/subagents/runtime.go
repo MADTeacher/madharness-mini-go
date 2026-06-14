@@ -63,6 +63,10 @@ func ChangedFilesFromEvents(events []map[string]any) []string {
 		if event["event"] != "tool_observation" {
 			continue
 		}
+		observation, _ := event["observation"].(map[string]any)
+		if observation["ok"] != true {
+			continue
+		}
 		toolName, _ := event["tool"].(string)
 		args, _ := event["args"].(map[string]any)
 		switch toolName {

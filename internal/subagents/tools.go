@@ -106,12 +106,16 @@ func EffectiveTools(subagent Subagent, requestedProfile string) ([]string, error
 	if requestedProfile == "writable" && subagent.Profile != "writable" {
 		return nil, fmt.Errorf("subagent is not writable: %s", subagent.Name)
 	}
+	effectiveProfile := subagent.Profile
+	if requestedProfile != "" {
+		effectiveProfile = requestedProfile
+	}
 	toolsList := append([]string{}, subagent.Tools...)
-	if requestedProfile == "read-only" {
-		denied := map[string]bool{"apply_patch": true, "write_file": true, "run_shell": true}
+	if effectiveProfile == "read-only" {
+		effects := RuntimeToolEffects()
 		filtered := []string{}
 		for _, name := range toolsList {
-			if !denied[name] {
+			if toolAllowedInReadOnly(name, effects[name]) {
 				filtered = append(filtered, name)
 			}
 		}

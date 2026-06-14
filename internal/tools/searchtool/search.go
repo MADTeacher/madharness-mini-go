@@ -10,6 +10,8 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 )
 
+const searchFileMaxBytes = 1 * 1024 * 1024
+
 // Spec возвращает search_code tool.
 func Spec() tools.Spec {
 	return tools.Spec{
@@ -28,6 +30,7 @@ func searchCode(ctx *tools.Context, args map[string]any) tools.Observation {
 	query := tools.StringArg(args, "query", "")
 	pattern := tools.StringArg(args, "glob", "*")
 	matches := []map[string]any{}
+	fileTruncated := false
 	_ = filepath.WalkDir(ctx.Config.Root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || tools.Ignored(path) {
 			if d != nil && d.IsDir() {
@@ -48,27 +51,29 @@ func searchCode(ctx *tools.Context, args map[string]any) tools.Observation {
 		if _, err := ctx.Policy.SafePath(filepath.ToSlash(rel)); err != nil {
 			return nil
 		}
-		addMatches(ctx.Config.Root, path, query, &matches)
+		if addMatches(ctx.Config.Root, path, query, &matches) {
+			fileTruncated = true
+		}
 		if len(matches) >= 100 {
 			return filepath.SkipAll
 		}
 		return nil
 	})
-	truncated := len(matches) >= 100
+	truncated := len(matches) >= 100 || fileTruncated
 	return tools.OK("search_code", fmt.Sprintf("found %d matches", len(matches)), map[string]any{
 		"results":   matches,
 		"truncated": truncated,
 	})
 }
 
-func addMatches(root string, path string, query string, matches *[]map[string]any) {
-	raw, err := os.ReadFile(path)
+func addMatches(root string, path string, query string, matches *[]map[string]any) bool {
+	raw, _, truncated, err := tools.ReadRegularFilePrefix(path, searchFileMaxBytes)
 	if err != nil {
-		return
+		return false
 	}
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		return
+		return truncated
 	}
 	for no, line := range strings.Split(string(raw), "\n") {
 		if !strings.Contains(line, query) {
@@ -84,9 +89,10 @@ func addMatches(root string, path string, query string, matches *[]map[string]an
 			"preview": preview,
 		})
 		if len(*matches) >= 100 {
-			return
+			return truncated
 		}
 	}
+	return truncated
 }
 
 const description = `Search for a literal substring in workspace files.

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"regexp"
 	"sync"
@@ -123,6 +122,7 @@ func (m *Manager) Start(options StartOptions) (Status, error) {
 		return Status{}, err
 	}
 	cmd := exec.Command(options.Argv[0], options.Argv[1:]...)
+	PrepareCommand(cmd)
 	cmd.Dir = options.CWD
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -184,6 +184,8 @@ func (m *Manager) Start(options StartOptions) (Status, error) {
 			return status, ErrExitedBeforeReady
 		}
 	case <-time.After(timeout):
+		status := process.stop(closeAllStopWait, "readiness_timeout")
+		return status, ErrReadyTimeout
 	}
 	return process.Status(), nil
 }
@@ -259,6 +261,9 @@ func (m *Manager) CloseAll(trace TraceWriter) {
 // ErrExitedBeforeReady означает, что процесс завершился до ready_pattern.
 var ErrExitedBeforeReady = errors.New("process exited before readiness")
 
+// ErrReadyTimeout означает, что ready_pattern не появился за отведённое время.
+var ErrReadyTimeout = errors.New("process readiness timeout")
+
 func (m *Manager) reserve(options StartOptions, readyRe *regexp.Regexp) (*Process, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -300,12 +305,13 @@ func (m *Manager) dropReserved(process *Process) {
 
 func (m *Manager) waitProcess(process *Process, trace TraceWriter, reason string, span *tracepkg.Span) {
 	err := process.cmd.Wait()
-	process.finish(err)
+	CleanupCommand(process.cmd)
 	m.mu.Lock()
 	if process.name != "" && m.names[process.name] == process.id {
 		delete(m.names, process.name)
 	}
 	m.mu.Unlock()
+	process.finish(err)
 	status := process.Status()
 	stopReason := process.stopReasonOr(reason)
 	writeTrace(trace, "process_stopped", map[string]any{
@@ -409,17 +415,7 @@ func (p *Process) stop(timeout time.Duration, reason string) Status {
 	if !running || cmd == nil || cmd.Process == nil {
 		return p.Status()
 	}
-	_ = cmd.Process.Signal(os.Interrupt)
-	select {
-	case <-done:
-		return p.Status()
-	case <-time.After(timeout):
-	}
-	_ = cmd.Process.Kill()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-	}
+	StopCommand(cmd, done, timeout)
 	return p.Status()
 }
 

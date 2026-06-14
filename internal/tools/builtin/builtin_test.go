@@ -143,6 +143,17 @@ func TestRunShellRejectsInvalidCWD(t *testing.T) {
 	}
 }
 
+func TestRunShellRejectsSymlinkCWD(t *testing.T) {
+	cfg, registry := testRegistryWithConfig(t)
+	mustSymlink(t, t.TempDir(), filepath.Join(cfg.Root, "outside-cwd"))
+
+	obs := registry.Call("run_shell", map[string]any{"command": "pwd", "cwd": "outside-cwd"})
+
+	if obs["ok"] != false || !strings.Contains(obs["summary"].(string), "outside workspace") {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
 func TestManagedShellToolLifecycle(t *testing.T) {
 	cfg, registry, manager := testRegistryWithProcesses(t)
 	defer manager.CloseAll(nil)
@@ -370,6 +381,13 @@ func helperCommand(t *testing.T, mode string) string {
 	t.Helper()
 	t.Setenv("GO_WANT_BUILTIN_MANAGED_SHELL_HELPER", "1")
 	return shellQuote(os.Args[0]) + " -test.run=TestHelperBuiltinManagedShell -- " + mode
+}
+
+func mustSymlink(t *testing.T, oldname string, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlink is not available: %v", err)
+	}
 }
 
 func shellQuote(value string) string {

@@ -151,7 +151,7 @@ func TestPlannerCannotWriteNonMarkdownFiles(t *testing.T) {
 
 func TestDelegateProfileDowngradeAndUpgrade(t *testing.T) {
 	cfg := testAgentConfig(t)
-	writeAgentSubagent(t, cfg.Root, "test-writer", "writable", []string{"list_files", "write_file", "run_shell"})
+	writeAgentSubagent(t, cfg.Root, "test-writer", "writable", []string{"list_files", "write_file", "run_shell", "start_shell", "shell_status", "stop_shell"})
 	downgradeClient := &sequenceClient{responses: []map[string]any{
 		toolCallResponse("call_delegate", "delegate_task", map[string]any{"subagent": "test-writer", "task": "inspect", "profile": "read-only"}),
 		contentResponse("subagent done"),
@@ -160,7 +160,12 @@ func TestDelegateProfileDowngradeAndUpgrade(t *testing.T) {
 	if _, _, err := runWithClientOptions("downgrade", cfg, downgradeClient, RunOptions{OrchestrationMode: "auto"}); err != nil {
 		t.Fatal(err)
 	}
-	if containsTool(downgradeClient.toolsSeen[1], "write_file") || containsTool(downgradeClient.toolsSeen[1], "run_shell") {
+	for _, name := range []string{"write_file", "run_shell", "start_shell", "shell_status", "stop_shell"} {
+		if containsTool(downgradeClient.toolsSeen[1], name) {
+			t.Fatalf("downgraded tools = %v", schemaToolNames(downgradeClient.toolsSeen[1]))
+		}
+	}
+	if strings.Join(schemaToolNames(downgradeClient.toolsSeen[1]), ",") != "list_files" {
 		t.Fatalf("downgraded tools = %v", schemaToolNames(downgradeClient.toolsSeen[1]))
 	}
 
@@ -190,6 +195,27 @@ func toolCallResponse(id string, name string, args map[string]any) map[string]an
 			"id":       id,
 			"function": map[string]any{"name": name, "arguments": string(rawArgs)},
 		}},
+	}}}}
+}
+
+type testToolCall struct {
+	id   string
+	name string
+	args map[string]any
+}
+
+func multiToolCallResponse(calls ...testToolCall) map[string]any {
+	toolCalls := make([]any, 0, len(calls))
+	for _, call := range calls {
+		rawArgs, _ := json.Marshal(call.args)
+		toolCalls = append(toolCalls, map[string]any{
+			"id":       call.id,
+			"function": map[string]any{"name": call.name, "arguments": string(rawArgs)},
+		})
+	}
+	return map[string]any{"choices": []any{map[string]any{"message": map[string]any{
+		"content":    nil,
+		"tool_calls": toolCalls,
 	}}}}
 }
 

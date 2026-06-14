@@ -209,6 +209,62 @@ func TestInitializeCreatesConfigWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestInitializePersistsFlagsButNotEnvOverrides(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	env := "MADHARNESS_MINI_MODEL=env-model\nMADHARNESS_MINI_BASE_URL=https://env.example/v1\nMADHARNESS_MINI_API_KEY=env-secret\nMADHARNESS_MINI_APPROVAL_MODE=ask\nMADHARNESS_MINI_YOLO=true\nMADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS=4\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Data.YoloMode || cfg.Data.ApprovalMode != "ask" || cfg.Data.Model != "env-model" {
+		t.Fatalf("env was not applied before init: %+v", cfg.Data)
+	}
+	path, _, err := cfg.Initialize(InitOptions{
+		Model:  "flag-model",
+		APIKey: "flag-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := readConfigMap(t, path)
+	if data["model"] != "flag-model" || data["api_key"] != "flag-secret" {
+		t.Fatalf("explicit init flags were not persisted: %v", data)
+	}
+	if data["base_url"] != "https://openrouter.ai/api/v1" {
+		t.Fatalf("base_url persisted env override: %v", data["base_url"])
+	}
+	if data["approval_mode"] != "deny" || data["yolo_mode"] != false || data["max_parallel_tool_calls"] != float64(1) {
+		t.Fatalf("env-only settings leaked into config: %v", data)
+	}
+}
+
+func TestEnsureDirsDoesNotPersistEnvOverrides(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	env := "MADHARNESS_MINI_APPROVAL_MODE=ask\nMADHARNESS_MINI_YOLO=true\n"
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Data.YoloMode || cfg.Data.ApprovalMode != "ask" {
+		t.Fatalf("env was not applied before EnsureDirs: %+v", cfg.Data)
+	}
+	if err := cfg.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	data := readConfigMap(t, filepath.Join(root, StateDir, "config.json"))
+	if data["approval_mode"] != "deny" || data["yolo_mode"] != false {
+		t.Fatalf("EnsureDirs persisted env-only settings: %v", data)
+	}
+}
+
 func mustWriteConfig(t *testing.T, root string, data map[string]any) {
 	t.Helper()
 	dir := filepath.Join(root, StateDir)
@@ -222,4 +278,17 @@ func mustWriteConfig(t *testing.T, root string, data map[string]any) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func readConfigMap(t *testing.T, path string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
