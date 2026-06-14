@@ -48,6 +48,7 @@ func DefaultSettings() Settings {
 			".madharness-mini/config.json",
 			".madharness-mini/hooks.json",
 			".madharness-mini/mcp.json",
+			".madharness-mini/subagents",
 		},
 		AllowShell:               true,
 		ApprovalMode:             "deny",

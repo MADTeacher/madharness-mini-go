@@ -72,14 +72,14 @@ func (p *Policy) SafePathDecision(raw string) PathDecision {
 	return PathDecision{Decision: allow(), Path: path}
 }
 
-// SkillRoot проверяет фиксированный каталог skills внутри workspace.
+// TrustedWorkspacePath проверяет заранее известный control-plane путь harness.
 //
-// Discovery читает только заранее известные skill roots. Они не проходят через
+// Discovery читает только фиксированные roots. Они не проходят через
 // protected_paths как пользовательские файловые инструменты, но всё равно не
-// могут выходить за workspace.
-func (p *Policy) SkillRoot(raw string) (string, error) {
+// могут выходить за workspace, в том числе через symlink.
+func (p *Policy) TrustedWorkspacePath(raw string, label string) (string, error) {
 	if raw == "" {
-		return "", fmt.Errorf("empty skill root")
+		return "", fmt.Errorf("empty %s", label)
 	}
 	path := raw
 	if !filepath.IsAbs(path) {
@@ -88,9 +88,22 @@ func (p *Policy) SkillRoot(raw string) (string, error) {
 	path = filepath.Clean(path)
 	rel, err := filepath.Rel(p.root, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("skill root outside workspace: %s", raw)
+		return "", fmt.Errorf("%s outside workspace: %s", label, raw)
+	}
+	resolved, err := resolvePathForDecision(path)
+	if err != nil {
+		return "", fmt.Errorf("%s cannot be resolved safely: %s: %w", label, raw, err)
+	}
+	resolvedRel, err := filepath.Rel(p.resolvedRoot, resolved)
+	if err != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s outside workspace: %s", label, raw)
 	}
 	return path, nil
+}
+
+// SkillRoot проверяет фиксированный каталог skills внутри workspace.
+func (p *Policy) SkillRoot(raw string) (string, error) {
+	return p.TrustedWorkspacePath(raw, "skill root")
 }
 
 func (p *Policy) isProtected(path string, rel string) bool {

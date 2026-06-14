@@ -32,7 +32,7 @@ func TestPathDecisionMarksProtectedPathEscalatable(t *testing.T) {
 	}
 }
 
-func TestDefaultProtectedPathsCoverControlPlane(t *testing.T) {
+func TestDefaultProtectedPathsRequireApprovalForControlPlane(t *testing.T) {
 	p := New(testPolicyConfig(t))
 	for _, path := range []string{
 		"AGENTS.md",
@@ -40,19 +40,38 @@ func TestDefaultProtectedPathsCoverControlPlane(t *testing.T) {
 		".madharness-mini/config.json",
 		".madharness-mini/hooks.json",
 		".madharness-mini/mcp.json",
+		".madharness-mini/subagents/planner.md",
 	} {
 		decision := p.SafePathDecision(path)
 		if decision.Allowed || !decision.Escalatable || decision.Code != CodeProtectedPath {
 			t.Fatalf("%s decision = %#v", path, decision)
 		}
 	}
-	decision := p.SafePathDecision(".madharness-mini/traces/trace-id/trace-id.jsonl")
-	if !decision.Allowed {
-		t.Fatalf("trace path should remain writable by harness: %#v", decision)
+	for _, path := range []string{
+		".madharness-mini/traces/trace-id/trace-id.jsonl",
+		"app/config.json",
+	} {
+		decision := p.SafePathDecision(path)
+		if !decision.Allowed {
+			t.Fatalf("%s should remain writable by harness: %#v", path, decision)
+		}
 	}
-	decision = p.SafePathDecision("app/config.json")
-	if !decision.Allowed {
-		t.Fatalf("ordinary config.json should not be protected by control-plane default: %#v", decision)
+}
+
+func TestTrustedWorkspacePathBypassesProtectedOnlyInsideWorkspace(t *testing.T) {
+	cfg := testPolicyConfig(t)
+	p := New(cfg)
+	if decision := p.SafePathDecision(".madharness-mini/subagents/planner.md"); decision.Allowed || !decision.Escalatable {
+		t.Fatalf("model path decision = %#v", decision)
+	}
+	if path, err := p.TrustedWorkspacePath(".madharness-mini/subagents", "subagent root"); err != nil || path == "" {
+		t.Fatalf("trusted root path=%q err=%v", path, err)
+	}
+
+	outside := t.TempDir()
+	mustSymlink(t, outside, filepath.Join(cfg.Root, "linked-subagents"))
+	if path, err := p.TrustedWorkspacePath("linked-subagents", "subagent root"); err == nil || path != "" {
+		t.Fatalf("trusted symlink path=%q err=%v", path, err)
 	}
 }
 

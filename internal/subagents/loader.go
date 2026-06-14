@@ -38,7 +38,7 @@ func Discover(cfg *config.Config) Index {
 		}
 	}
 
-	root, err := policy.New(cfg).SafePath(projectSubagentsDir)
+	root, err := policy.New(cfg).TrustedWorkspacePath(projectSubagentsDir, "subagent root")
 	if err != nil {
 		diagnostics = append(diagnostics, Diagnostic{"error", projectSubagentsDir, err.Error()})
 	} else if info, err := os.Stat(root); err == nil {

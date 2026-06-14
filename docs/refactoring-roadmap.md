@@ -13,8 +13,8 @@ backlog отделяет follow-up задачи и открытые design decis
 | Path/files safety | `internal/policy`, `internal/tools/filetools`, `internal/tools/searchtool`, `internal/tools/imagetool`, `internal/tools/patchtool`, `internal/instructions` | Закрыты symlink escape, protected path bypass и чтение больших или специальных файлов до лимитов. |
 | Shell/process lifecycle | `internal/policy/shell*`, `internal/tools/shelltool`, `internal/processes` | Рискованные команды проверяются по argv, background cases закрыты, process tree завершается, readiness timeout считается ошибкой. |
 | Subagents runtime | `internal/subagents`, `internal/agent`, `internal/agent/turnexec` | Исправлены read-only downgrade, остановка после `ask_user`, `changed_files` только для успешных записей и диагностика неизвестных tools. |
-| Agent Skills path | `internal/skills` | Loader приведён к документированному `.madharness-mini/skills`, override-поведение закреплено тестами. |
-| Config/control-plane safety | `internal/config`, `internal/policy` tests | Env overrides не сохраняются через `init`; control-plane файлы защищены по умолчанию без поломки штатного init/trace. |
+| Agent Skills path | `internal/skills` | Loader поддерживает `.agents/skills` и `.madharness-mini/skills`; старый `.madharness_mini/skills` игнорируется, override-поведение закреплено тестами. |
+| Config/control-plane safety | `internal/config`, `internal/policy` tests | Env overrides не сохраняются через `init`; secret/host-owned paths и harness control-plane файлы требуют approval перед model-invoked изменением. |
 | Hooks redaction | `internal/hooks` | Очевидные секреты маскируются не только по ключам, но и внутри значений `command`, `content` и похожих payload-полей. |
 | Documentation corrections | `docs/`, кроме этого файла | Документация уточняет `protected_paths`, `--orchestrate-required`, branch-neutral режим `run` и фактический охват `skill_resource_used`. |
 | Apply patch E2E coverage | `internal/tools/builtin/builtin_test.go` | Добавлены end-to-end тесты `apply_patch` на delete, move, outside workspace denial и protected path denial. |
@@ -33,11 +33,5 @@ backlog отделяет follow-up задачи и открытые design decis
 
 ### Follow-Up Design Decisions
 
-- Решить, должны ли harness control-plane файлы (`AGENTS.md`,
-  `.madharness-mini/hooks.json`, `.madharness-mini/mcp.json`,
-  `.madharness-mini/subagents`) быть protected по умолчанию или только
-  документированным проектным риском.
-- Решить, нужна ли backward compatibility для старого
-  `.madharness_mini/skills`, если loader переезжает на `.madharness-mini/skills`.
 - Решить, должны ли project-local субагенты получать доступ к MCP/custom tools
   или validator должен явно запрещать всё, чего нет в child registry.
