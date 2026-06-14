@@ -27,6 +27,7 @@ func DefaultSettings() Settings {
 		APIKey:                   "",
 		Temperature:              0.2,
 		MaxTurns:                 50,
+		MaxParallelToolCalls:     1,
 		ContextMaxTokens:         60000,
 		ContextKeepRecentTurns:   3,
 		WorkspaceRoot:            ".",

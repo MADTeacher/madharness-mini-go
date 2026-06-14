@@ -20,6 +20,7 @@ func Spec() tools.Spec {
 			"glob":  tools.StrParam("*", "fnmatch-style pattern matched against file names only; defaults to *", false),
 		}, []string{"query"}),
 		Handler: searchCode,
+		Effect:  tools.EffectRead,
 	}
 }
 

@@ -53,6 +53,25 @@ func TestRegistryFiltersAllowedTools(t *testing.T) {
 	}
 }
 
+func TestRegistryReturnsNormalizedToolEffects(t *testing.T) {
+	cfg := testToolsConfig(t)
+	registry, err := NewRegistry(cfg, fakeProvider{
+		specs: []Spec{
+			{Name: "read", Parameters: Obj(nil, nil), Handler: func(*Context, map[string]any) Observation { return OK("read", "ok", nil) }, Effect: EffectRead},
+			{Name: "legacy", Parameters: Obj(nil, nil), Handler: func(*Context, map[string]any) Observation { return OK("legacy", "ok", nil) }},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registry.Effect("read") != EffectRead {
+		t.Fatalf("read effect = %s", registry.Effect("read"))
+	}
+	if registry.Effect("legacy") != EffectExclusive || registry.Effect("missing") != EffectExclusive {
+		t.Fatalf("exclusive effects: legacy=%s missing=%s", registry.Effect("legacy"), registry.Effect("missing"))
+	}
+}
+
 func TestContextWritePathScope(t *testing.T) {
 	ctx := &Context{WritableSuffixes: []string{".md"}, WriteScopeDescription: "only markdown"}
 	if err := ctx.WritePathError("PLAN.md"); err != "" {
@@ -77,6 +96,7 @@ func testToolsConfig(t *testing.T) *config.Config {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	cfg, err := config.New(t.TempDir())

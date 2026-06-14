@@ -38,6 +38,13 @@ func (c *Config) applyEnv() error {
 		}
 		c.Data.OrchestrationMode = mode
 	}
+	if value := env["MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS"]; value != "" {
+		parsed, err := parseIntEnv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", value)
+		if err != nil {
+			return err
+		}
+		c.Data.MaxParallelToolCalls = parsed
+	}
 	if value := env["MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT"]; value != "" {
 		parsed, err := parseBoolEnv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", value)
 		if err != nil {

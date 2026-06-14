@@ -83,11 +83,34 @@ func TestClientSendsChatCompletionsPayload(t *testing.T) {
 	}
 }
 
+func TestClientEnablesParallelToolCallsWhenConfigured(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+	cfg := testConfig(t)
+	cfg.Data.BaseURL = server.URL
+	cfg.Data.APIKey = "token"
+	cfg.Data.MaxParallelToolCalls = 2
+
+	if _, err := New(cfg).Chat([]map[string]any{{"role": "user", "content": "hello"}}, []map[string]any{{"type": "function"}}); err != nil {
+		t.Fatal(err)
+	}
+	if payload["parallel_tool_calls"] != true {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
 func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

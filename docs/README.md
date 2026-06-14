@@ -11,4 +11,5 @@
 - [MCP](mcp.md)
 - [Субагенты](subagents.md)
 - [Hooks](hooks.md)
+- [Конкурентность harness](concurrency-roadmap.md)
 - [Инструмент apply_patch](apply-patch.md)

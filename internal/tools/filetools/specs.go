@@ -11,6 +11,7 @@ func listFilesSpec() tools.Spec {
 			"glob": tools.StrParam("*", "fnmatch-style pattern matched against file names only; defaults to *", false),
 		}, nil),
 		Handler: listFiles,
+		Effect:  tools.EffectRead,
 	}
 }
 
@@ -24,6 +25,7 @@ func readFileSpec() tools.Spec {
 			"end":   map[string]any{"type": "integer", "default": 160, "description": "1-based last line number to include; defaults to start + 160."},
 		}, []string{"path"}),
 		Handler: readFile,
+		Effect:  tools.EffectRead,
 	}
 }
 
@@ -36,6 +38,7 @@ func writeFileSpec() tools.Spec {
 			"content": tools.StrParam("", "Complete UTF-8 file content to write, including final newline if wanted.", true),
 		}, []string{"path", "content"}),
 		Handler: writeFile,
+		Effect:  tools.EffectWrite,
 	}
 }
 

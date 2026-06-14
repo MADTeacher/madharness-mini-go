@@ -12,6 +12,7 @@ func Spec() tools.Spec {
 			"patch": tools.StrParam("", patchArgumentDescription, true),
 		}, []string{"patch"}),
 		Handler: applyPatch,
+		Effect:  tools.EffectWrite,
 	}
 }
 

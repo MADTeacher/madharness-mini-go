@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
@@ -13,7 +14,7 @@ type Registry struct {
 	order     []string
 	tools     map[string]Spec
 	providers []Provider
-	closed    bool
+	closeOnce sync.Once
 }
 
 // RegistryOptions передаёт handlers наблюдаемость текущего run.
@@ -99,17 +100,18 @@ func normalizeSuffixes(values []string) []string {
 
 // Close освобождает ресурсы provider-ов, которые живут дольше одного вызова tool.
 func (r *Registry) Close() {
-	if r == nil || r.closed {
+	if r == nil {
 		return
 	}
-	r.closed = true
-	for _, provider := range r.providers {
-		closer, ok := provider.(CloseProvider)
-		if !ok {
-			continue
+	r.closeOnce.Do(func() {
+		for _, provider := range r.providers {
+			closer, ok := provider.(CloseProvider)
+			if !ok {
+				continue
+			}
+			closer.Close(r.ctx.Trace)
 		}
-		closer.Close(r.ctx.Trace)
-	}
+	})
 }
 
 // Schemas возвращает описание tools для model call.
@@ -126,6 +128,15 @@ func (r *Registry) Tools() []string {
 	out := make([]string, len(r.order))
 	copy(out, r.order)
 	return out
+}
+
+// Effect возвращает класс побочного эффекта tool для планировщика turn-а.
+func (r *Registry) Effect(name string) Effect {
+	tool, ok := r.tools[name]
+	if !ok {
+		return EffectExclusive
+	}
+	return NormalizeEffect(tool.Effect)
 }
 
 // Call выполняет handler или возвращает fail-наблюдение для неизвестного tool.

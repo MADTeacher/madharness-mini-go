@@ -149,9 +149,10 @@ func runSubagentLoop(
 		maxTurns = cfg.Data.SubagentMaxTurns
 	}
 	return runModelLoop(client, tr, context, registry, maxTurns, loopOptions{
-		StopOnUserInput: true,
-		Hooks:           hookManager,
-		Kind:            "subagent",
+		StopOnUserInput:      true,
+		Hooks:                hookManager,
+		Kind:                 "subagent",
+		MaxParallelToolCalls: cfg.Data.MaxParallelToolCalls,
 	})
 }
 

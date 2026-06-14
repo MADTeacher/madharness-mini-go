@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
@@ -17,6 +18,8 @@ import (
 type Trace struct {
 	ID   string
 	Path string
+	mu   sync.Mutex
+	seq  int64
 }
 
 // TraceID отдаёт стабильный идентификатор текущей трассы для lifecycle hooks.
@@ -90,9 +93,13 @@ func safeTraceLabel(value string) string {
 
 // Write дописывает одно событие в JSONL.
 func (t *Trace) Write(event string, fields map[string]any) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.seq++
 	record := map[string]any{
 		"ts":    float64(time.Now().UnixNano()) / 1e9,
 		"event": event,
+		"seq":   t.seq,
 	}
 	for key, value := range fields {
 		record[key] = value

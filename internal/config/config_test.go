@@ -11,6 +11,7 @@ func cleanEnv(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	t.Setenv("MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT", "")
@@ -95,7 +96,7 @@ func TestEnvFileOverridesOrchestrationSettings(t *testing.T) {
 	cleanEnv(t)
 	root := t.TempDir()
 	mustWriteConfig(t, root, map[string]any{"workspace_root": ".", "allow_shell": true})
-	env := "MADHARNESS_MINI_ORCHESTRATION_ENABLED=false\nMADHARNESS_MINI_ORCHESTRATION_MODE=requested\n"
+	env := "MADHARNESS_MINI_ORCHESTRATION_ENABLED=false\nMADHARNESS_MINI_ORCHESTRATION_MODE=requested\nMADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS=3\n"
 	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +107,23 @@ func TestEnvFileOverridesOrchestrationSettings(t *testing.T) {
 	}
 	if cfg.Data.OrchestrationEnabled || cfg.Data.OrchestrationMode != "requested" {
 		t.Fatalf("orchestration settings were not applied: %+v", cfg.Data)
+	}
+	if cfg.Data.MaxParallelToolCalls != 3 {
+		t.Fatalf("max_parallel_tool_calls = %d", cfg.Data.MaxParallelToolCalls)
+	}
+}
+
+func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
+	cleanEnv(t)
+	root := t.TempDir()
+	mustWriteConfig(t, root, map[string]any{"max_parallel_tool_calls": 0})
+
+	cfg, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Data.MaxParallelToolCalls != 1 {
+		t.Fatalf("max_parallel_tool_calls = %d", cfg.Data.MaxParallelToolCalls)
 	}
 }
 

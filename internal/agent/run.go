@@ -139,8 +139,9 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		applyHiddenObservationEffects(context, tr, obs)
 	}
 	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{
-		Hooks: hookManager,
-		Kind:  "run",
+		Hooks:                hookManager,
+		Kind:                 "run",
+		MaxParallelToolCalls: cfg.Data.MaxParallelToolCalls,
 	})
 	return result.Result, tr.Path, err
 }

@@ -1,0 +1,77 @@
+# Конкурентность harness
+
+Этот документ отделяет реализованное поведение v1 от следующих шагов. Ветка
+остаётся учебной: конкурентность добавляется там, где она не ломает порядок
+сообщений модели, hooks и trace.
+
+## V1 implemented behavior
+
+`max_parallel_tool_calls` управляет конкурентным выполнением tool calls внутри
+одного assistant-turn. По умолчанию значение равно `1`, поэтому старые запуски
+ведут себя последовательно.
+
+Параллельно могут выполняться только соседние read-only tools:
+
+- `list_files`;
+- `read_file`;
+- `read_image`;
+- `search_code`.
+
+Остальные tools остаются барьерами и выполняются по одному:
+
+- `write_file`;
+- `apply_patch`;
+- `run_shell`;
+- `activate_skill`;
+- `delegate_task`;
+- MCP tools;
+- неизвестные tools без явного effect.
+
+`before_tool_call` вызывается синхронно и в порядке ответа модели до запуска
+handler-ов. После выполнения handlers harness применяет observations, hidden
+effects, trace events и `RecordToolResult()` строго в исходном порядке
+`tool_calls`, даже если read-only handlers завершились в другом порядке.
+
+## Future work
+
+### Внутренняя event bus
+
+Сейчас lifecycle-точки всё ещё вызывают trace и hooks напрямую. Следующий шаг -
+единая внутренняя шина событий или middleware pipeline, где событие публикуется
+один раз, а trace, hooks, metrics и project policy получают его как подписчики.
+
+### Observe/enforce hooks
+
+Hooks стоит разделить на наблюдающие и блокирующие. `enforce` hooks должны
+оставаться синхронными на критическом пути, а `observe` hooks можно выполнять
+через ограниченную очередь без права блокировать действие.
+
+### Parallel subagents
+
+`delegate_task` пока остаётся barrier. Для параллельных субагентов нужен общий
+лимит model calls, корректная отмена, дочерние trace spans и понятный порядок
+возврата результатов parent-агенту.
+
+### Workspace scheduler
+
+V1 сериализует все write/shell действия. Более сильная версия может ввести
+global workspace scheduler: read locks, path-level write locks, global locks для
+опасных tools и общий механизм для parent и subagents.
+
+### MCP multiplexer
+
+MCP tools сейчас сериализуются на уровне одного stdio server. Полноценная
+конкурентность требует JSON-RPC multiplexer: защищённые request id, pending map
+`id -> response channel`, dispatcher stdout и закрытие transport-а без гонок.
+
+### Session finalizer
+
+`session_end` и `session_error` пока пишутся из нескольких веток agent loop.
+Для более конкурентного runtime нужен session finalizer или state machine с
+once-семантикой, cancellation и обязательным flush дочерних задач.
+
+### Trace spans
+
+Trace v1 получил последовательный `seq`, но будущая диагностика должна добавить
+`event_id`, `span_id`, `parent_span_id`, явный flush contract и связи между
+parent trace, child trace и конкретным tool call.

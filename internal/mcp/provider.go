@@ -103,6 +103,7 @@ func toolSpecsForServer(config ServerConfig, client *StdioClient, listed []map[s
 			Description: fmt.Sprintf("[MCP:%s] %s", config.Name, description),
 			Parameters:  parameters,
 			Handler:     handler(client, config.Name, originalName, exportedName),
+			Effect:      tools.EffectMCP,
 		})
 	}
 	return specs, nil

@@ -13,6 +13,7 @@
 | `internal/subagents` | Загружает роли, вычисляет режим оркестрации, описывает tools субагентов и сводит дочерние traces. |
 | `internal/hooks` | Читает hooks config, запускает command handlers, делает redaction и пишет hook events в trace. |
 | `internal/agent` | Собирает запуск: trace, hooks, model client, skills, subagents, MCP, context и registry. |
+| `internal/agent/turnexec` | Планирует read-only tool batches и выполняет их конкурентно внутри одного turn-а. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
 | `internal/tools` | Описывает встроенные инструменты и общий `Registry`. |
 | `internal/policy` | Проверяет workspace-границы, protected paths и shell-команды. |
@@ -30,11 +31,14 @@
    `AGENTS.md`, catalog skills и историю.
 6. Перед model call вызывается `before_model_call`, после ответа -
    `after_model_call`.
-7. Если модель вызывает tool, `runModelLoop()` вызывает `before_tool_call`.
+7. Если модель вызывает tools, `runModelLoop()` синхронно вызывает
+   `before_tool_call` для каждого call.
 8. Если hook блокирует действие, handler не запускается, а модель получает
    fail-observation.
-9. Если блокировки нет, `tools.Registry` выполняет handler.
-10. После observation вызывается `after_tool_call`.
+9. Если блокировки нет, `turnexec` параллелит только соседние read-only tools,
+   а write/shell/state/delegate/MCP calls оставляет барьерами.
+10. После observation вызывается `after_tool_call`, а commit в context идёт в
+    исходном порядке `tool_calls`.
 11. При нормальном завершении hooks получают `session_end`, при ошибке -
     `session_error`.
 

@@ -55,5 +55,6 @@ func (p ToolProvider) Specs(*tools.Context) ([]tools.Spec, error) {
 			_ = ctx
 			return p.Runtime.Activate(tools.StringArg(args, "name", ""), "tool")
 		},
+		Effect: tools.EffectState,
 	}}, nil
 }

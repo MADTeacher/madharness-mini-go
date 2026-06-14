@@ -23,6 +23,7 @@ func Spec() tools.Spec {
 			},
 		}, []string{"path"}),
 		Handler: readImage,
+		Effect:  tools.EffectRead,
 	}
 }
 

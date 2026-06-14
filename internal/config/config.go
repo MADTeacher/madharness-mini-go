@@ -14,6 +14,7 @@ type Settings struct {
 	APIKey                   string            `json:"api_key"`
 	Temperature              float64           `json:"temperature"`
 	MaxTurns                 int               `json:"max_turns"`
+	MaxParallelToolCalls     int               `json:"max_parallel_tool_calls"`
 	ContextMaxTokens         int               `json:"context_max_tokens"`
 	ContextKeepRecentTurns   int               `json:"context_keep_recent_turns"`
 	WorkspaceRoot            string            `json:"workspace_root"`
@@ -61,8 +62,15 @@ func New(cwd string) (*Config, error) {
 	if err := cfg.applyEnv(); err != nil {
 		return nil, err
 	}
+	cfg.normalize()
 	cfg.refreshRoot()
 	return cfg, nil
+}
+
+func (c *Config) normalize() {
+	if c.Data.MaxParallelToolCalls < 1 {
+		c.Data.MaxParallelToolCalls = 1
+	}
 }
 
 func (c *Config) loadFile() error {

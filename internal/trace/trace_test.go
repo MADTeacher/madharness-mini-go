@@ -1,6 +1,8 @@
 package trace
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -42,6 +44,12 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	}
 	if err := tr.Write("session_end", map[string]any{"result": "ok"}); err != nil {
 		t.Fatal(err)
+	}
+	events := readTraceEvents(t, tr.Path)
+	for index, event := range events {
+		if int(event["seq"].(float64)) != index+1 {
+			t.Fatalf("seq at %d = %v", index, event["seq"])
+		}
 	}
 	summary, err := Summarize(cfg, tr.ID[:8])
 	if err != nil {
@@ -106,6 +114,7 @@ func testTraceConfig(t *testing.T) *config.Config {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	cfg, err := config.New(t.TempDir())
@@ -113,4 +122,24 @@ func testTraceConfig(t *testing.T) *config.Config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+func readTraceEvents(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []map[string]any{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line == "" {
+			continue
+		}
+		event := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	return events
 }

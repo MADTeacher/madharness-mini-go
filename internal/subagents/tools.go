@@ -44,6 +44,7 @@ func (p OrchestratorProvider) Specs(ctx *tools.Context) ([]tools.Spec, error) {
 			},
 		}, []string{"subagent", "task"}),
 		Handler: p.delegate,
+		Effect:  tools.EffectDelegate,
 	}}, nil
 }
 
@@ -79,6 +80,7 @@ func (AskUserProvider) Specs(ctx *tools.Context) ([]tools.Spec, error) {
 			"reason": tools.StrParam("", "Why the answer is needed before continuing.", false),
 		}, []string{"question"}),
 		Handler: askUser,
+		Effect:  tools.EffectState,
 	}}, nil
 }
 

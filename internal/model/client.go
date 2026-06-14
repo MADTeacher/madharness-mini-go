@@ -62,7 +62,7 @@ func (c *Client) Chat(messages []map[string]any, tools []map[string]any) (map[st
 	}
 	if len(tools) > 0 {
 		payload["tools"] = tools
-		payload["parallel_tool_calls"] = false
+		payload["parallel_tool_calls"] = c.cfg.Data.MaxParallelToolCalls > 1
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

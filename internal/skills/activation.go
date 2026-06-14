@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
@@ -15,6 +16,7 @@ import (
 type Runtime struct {
 	cfg    *config.Config
 	index  Index
+	mu     sync.RWMutex
 	active map[string]bool
 }
 
@@ -36,7 +38,13 @@ func (r *Runtime) Activate(name string, trigger string) tools.Observation {
 	}
 	resources := ListResources(skill, r.cfg.Root)
 	resourceItems := resourceMaps(resources)
-	if r.active[name] {
+	r.mu.Lock()
+	alreadyActive := r.active[name]
+	if !alreadyActive {
+		r.active[name] = true
+	}
+	r.mu.Unlock()
+	if alreadyActive {
 		return tools.OK("activate_skill", "skill already active: "+name, map[string]any{
 			"name":           name,
 			"already_active": true,
@@ -44,7 +52,6 @@ func (r *Runtime) Activate(name string, trigger string) tools.Observation {
 			"resources":      resourceItems,
 		})
 	}
-	r.active[name] = true
 	obs := tools.OK("activate_skill", "activated skill: "+name+"; instructions were added to durable context", map[string]any{
 		"name":           name,
 		"already_active": false,
@@ -68,10 +75,12 @@ func (r *Runtime) ResourceEvent(path string) map[string]any {
 	if realPath, err := filepath.EvalSymlinks(path); err == nil {
 		resolved = filepath.Clean(realPath)
 	}
+	r.mu.RLock()
 	names := make([]string, 0, len(r.active))
 	for name := range r.active {
 		names = append(names, name)
 	}
+	r.mu.RUnlock()
 	sort.Strings(names)
 	for _, name := range names {
 		skill, ok := r.index.Skills[name]

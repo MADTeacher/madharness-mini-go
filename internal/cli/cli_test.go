@@ -13,6 +13,7 @@ func TestInitCommandCreatesConfigWithAPIKey(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	root := t.TempDir()
 	old, err := os.Getwd()
 	if err != nil {
@@ -44,6 +45,7 @@ func TestSkillsCommandsListShowValidate(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	root := t.TempDir()
 	old, err := os.Getwd()
 	if err != nil {
@@ -85,6 +87,7 @@ func TestSubagentsCommandsListShowValidate(t *testing.T) {
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
 	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
 	t.Setenv("MADHARNESS_MINI_API_KEY", "")
+	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_ENABLED", "")
 	t.Setenv("MADHARNESS_MINI_ORCHESTRATION_MODE", "")
 	root := t.TempDir()

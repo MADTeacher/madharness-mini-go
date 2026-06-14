@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/agent/turnexec"
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
@@ -11,9 +12,10 @@ import (
 )
 
 type loopOptions struct {
-	StopOnUserInput bool
-	Hooks           *hooks.Manager
-	Kind            string
+	StopOnUserInput      bool
+	Hooks                *hooks.Manager
+	Kind                 string
+	MaxParallelToolCalls int
 }
 
 type loopResult struct {
@@ -90,58 +92,12 @@ func runModelLoop(
 			})
 			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
-		for _, call := range calls {
-			name, args, obs, followups, callMap := executeToolCall(registry, call, options.Hooks, kind, turn)
-			subagentStop := stringObservationField(obs, "_subagent_stop")
-			if subagentStop != "" {
-				delete(obs, "_subagent_stop")
-			}
-			applyHiddenObservationEffects(context, tr, obs)
-			_ = tr.Write("tool_observation", map[string]any{
-				"tool":        name,
-				"args":        args,
-				"observation": obs,
-			})
-			emitHook(options.Hooks, "after_tool_call", kind, map[string]any{
-				"turn":        turn,
-				"tool":        name,
-				"args":        args,
-				"observation": obs,
-			})
-			if options.StopOnUserInput && subagentStop == "needs_user_input" {
-				result := "needs_user_input: " + stringObservationField(obs, "question")
-				_ = tr.Write("session_end", map[string]any{"result": result})
-				emitHook(options.Hooks, "session_end", kind, map[string]any{
-					"status":         "needs_user_input",
-					"turns":          turn + 1,
-					"result_preview": truncateForHook(stringObservationField(obs, "question"), 1000),
-				})
-				return loopResult{
-					Status:      "needs_user_input",
-					Result:      stringObservationField(obs, "question"),
-					Turns:       turn + 1,
-					Observation: obs,
-				}, nil
-			}
-			context.RecordToolResult(callMap, obs, followups)
-			if isParentUserInputRequest(obs) {
-				result := renderUserInputRequest(obs)
-				_ = tr.Write("user_input_requested", map[string]any{
-					"subagent":            stringObservationField(obs, "subagent"),
-					"question":            stringObservationField(obs, "question"),
-					"options":             obs["options"],
-					"reason":              stringObservationField(obs, "reason"),
-					"subagent_trace_id":   stringObservationField(obs, "subagent_trace_id"),
-					"subagent_trace_path": stringObservationField(obs, "subagent_trace_path"),
-				})
-				_ = tr.Write("session_end", map[string]any{"result": result})
-				emitHook(options.Hooks, "session_end", kind, map[string]any{
-					"status":         "needs_user_input",
-					"turns":          turn + 1,
-					"result_preview": truncateForHook(result, 1000),
-				})
-				return loopResult{Status: "needs_user_input", Result: result, Turns: turn + 1, Observation: obs}, nil
-			}
+		tasks := prepareToolTasks(registry, calls, options.Hooks, kind, turn)
+		results := turnexec.Execute(turnexec.Plan(tasks), options.MaxParallelToolCalls, func(task turnexec.Task) (tools.Observation, []map[string]any) {
+			return registry.CallWithFollowups(task.Name, task.Args)
+		})
+		if result, stopped := commitToolResults(results, context, tr, options, kind, turn); stopped {
+			return result, nil
 		}
 	}
 	result := "Agent stopped: max_turns exceeded."
@@ -168,38 +124,6 @@ func toolCalls(message map[string]any) []any {
 		out = append(out, item)
 	}
 	return out
-}
-
-func executeToolCall(
-	registry *tools.Registry,
-	call any,
-	manager *hooks.Manager,
-	kind string,
-	turn int,
-) (string, map[string]any, tools.Observation, []map[string]any, map[string]any) {
-	callMap, ok := call.(map[string]any)
-	if !ok {
-		obs := tools.Fail("tool_call", "invalid tool call: invalid shape")
-		return "tool_call", map[string]any{}, obs, nil, map[string]any{"id": "tool_call"}
-	}
-	name, args, err := tools.ParseToolArgs(callMap)
-	if err != nil {
-		obs := tools.Fail("tool_call", "invalid tool call: "+err.Error())
-		return "tool_call", map[string]any{}, obs, nil, callMap
-	}
-	decision := emitHook(manager, "before_tool_call", kind, map[string]any{
-		"turn":    turn,
-		"call_id": stringFromAny(callMap["id"]),
-		"tool":    name,
-		"args":    args,
-	})
-	if !decision.OK {
-		return name, args, tools.Fail(name, "blocked by hook: "+decision.Block, map[string]any{
-			"hook_blocked": true,
-		}), nil, callMap
-	}
-	obs, followups := registry.CallWithFollowups(name, args)
-	return name, args, obs, followups, callMap
 }
 
 func applyHiddenObservationEffects(context *agentcontext.Manager, tr *trace.Trace, observation tools.Observation) {

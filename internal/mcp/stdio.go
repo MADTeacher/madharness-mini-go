@@ -31,6 +31,7 @@ type StdioClient struct {
 	stderrMu  sync.Mutex
 	stderrLog []string
 	readers   sync.WaitGroup
+	requestMu sync.Mutex
 	writeMu   sync.Mutex
 	closeMu   sync.Mutex
 	closeCode *int
@@ -105,6 +106,8 @@ func (c *StdioClient) Start() ([]map[string]any, error) {
 
 // Request отправляет JSON-RPC request и ждёт response с тем же id.
 func (c *StdioClient) Request(method string, params map[string]any) (map[string]any, error) {
+	c.requestMu.Lock()
+	defer c.requestMu.Unlock()
 	message := c.rpc.Request(method, params)
 	expectedID, _ := message["id"].(int64)
 	if err := c.send(message); err != nil {

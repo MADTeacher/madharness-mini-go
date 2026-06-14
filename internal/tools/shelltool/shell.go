@@ -23,6 +23,7 @@ func Spec() tools.Spec {
 			"cwd":     tools.StrParam(".", "Workspace-relative directory to run from; use a skill root only for documented bundled scripts.", false),
 		}, []string{"command"}),
 		Handler: runShell,
+		Effect:  tools.EffectShell,
 	}
 }
 
