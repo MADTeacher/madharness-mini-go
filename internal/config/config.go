@@ -41,6 +41,25 @@ type Config struct {
 	Data     Settings
 }
 
+// Clone создаёт независимую копию настроек для одного запуска harness.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	clone.Data = c.Data
+	if c.Data.ProtectedPaths != nil {
+		clone.Data.ProtectedPaths = append([]string{}, c.Data.ProtectedPaths...)
+	}
+	if c.Data.Headers != nil {
+		clone.Data.Headers = map[string]string{}
+		for key, value := range c.Data.Headers {
+			clone.Data.Headers[key] = value
+		}
+	}
+	return &clone
+}
+
 // New строит конфиг слоями: defaults, config.json, .env, переменные окружения.
 func New(cwd string) (*Config, error) {
 	if cwd == "" {

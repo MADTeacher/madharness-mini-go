@@ -35,7 +35,8 @@ func Run(task string, cfg *config.Config) (string, string, error) {
 
 // RunWithOptions запускает agent loop с CLI-переопределениями одного запуска.
 func RunWithOptions(task string, cfg *config.Config, options RunOptions) (string, string, error) {
-	return runWithClientOptions(task, cfg, model.New(cfg), options)
+	runCfg := configForRunOptions(cfg, options)
+	return runWithClientOptions(task, runCfg, model.New(runCfg), options)
 }
 
 func runWithClient(task string, cfg *config.Config, client chatClient) (string, string, error) {
@@ -43,8 +44,6 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 }
 
 func runWithClientOptions(task string, cfg *config.Config, client chatClient, options RunOptions) (string, string, error) {
-	restoreRunOverrides := applyRunOptionOverrides(cfg, options)
-	defer restoreRunOverrides()
 	tr, err := trace.New(cfg, "run")
 	if err != nil {
 		return "", "", err
@@ -173,14 +172,12 @@ func sessionEndHookData(result loopResult) map[string]any {
 	}
 }
 
-func applyRunOptionOverrides(cfg *config.Config, options RunOptions) func() {
-	oldMaxParallelToolCalls := cfg.Data.MaxParallelToolCalls
+func configForRunOptions(cfg *config.Config, options RunOptions) *config.Config {
+	runCfg := cfg.Clone()
 	if options.MaxParallelToolCalls > 0 {
-		cfg.Data.MaxParallelToolCalls = options.MaxParallelToolCalls
+		runCfg.Data.MaxParallelToolCalls = options.MaxParallelToolCalls
 	}
-	return func() {
-		cfg.Data.MaxParallelToolCalls = oldMaxParallelToolCalls
-	}
+	return runCfg
 }
 
 func diagnosticsForTrace(diagnostics []skills.Diagnostic, root string) []map[string]string {

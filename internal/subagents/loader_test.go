@@ -28,6 +28,21 @@ func TestDiscoverReadsBuiltinAndProjectSubagents(t *testing.T) {
 	}
 }
 
+func TestDiscoverAllowsBuiltinToolsAndAskUser(t *testing.T) {
+	cfg := testConfig(t)
+	writeTestSubagent(t, cfg.Root, "asker", "read-only", []string{"list_files", "read_file", "search_code", "ask_user"}, false)
+
+	index := Discover(cfg)
+
+	subagent, ok := index.Subagents["asker"]
+	if !ok {
+		t.Fatal("project subagent was not discovered")
+	}
+	if strings.Join(subagent.Tools, ",") != "list_files,read_file,search_code,ask_user" {
+		t.Fatalf("tools = %v", subagent.Tools)
+	}
+}
+
 func TestProjectSubagentCannotShadowBuiltinWithoutOverride(t *testing.T) {
 	cfg := testConfig(t)
 	writeTestSubagent(t, cfg.Root, "planner", "writable", []string{"list_files"}, false)
@@ -76,6 +91,24 @@ func TestDiscoverRejectsInvalidSubagentFrontmatter(t *testing.T) {
 			"---",
 			"body",
 		}, "\n"),
+		"bad-activate-skill.md": strings.Join([]string{
+			"---",
+			"name: bad-activate-skill",
+			"description: Bad activate skill.",
+			"profile: writable",
+			`tools: ["list_files", "activate_skill"]`,
+			"---",
+			"body",
+		}, "\n"),
+		"bad-mcp.md": strings.Join([]string{
+			"---",
+			"name: bad-mcp",
+			"description: Bad MCP.",
+			"profile: writable",
+			`tools: ["list_files", "mcp__fake__echo"]`,
+			"---",
+			"body",
+		}, "\n"),
 		"unknown-tool.md": strings.Join([]string{
 			"---",
 			"name: unknown-tool",
@@ -103,12 +136,12 @@ func TestDiscoverRejectsInvalidSubagentFrontmatter(t *testing.T) {
 
 	index := Discover(cfg)
 
-	for _, name := range []string{"bad-tools", "bad-profile", "bad-delegate", "unknown-tool", "duplicate"} {
+	for _, name := range []string{"bad-tools", "bad-profile", "bad-delegate", "bad-activate-skill", "bad-mcp", "unknown-tool", "duplicate"} {
 		if _, ok := index.Subagents[name]; ok {
 			t.Fatalf("%s should not be loaded", name)
 		}
 	}
-	for _, want := range []string{"JSON-style list", "invalid profile", "not exposed to subagents", "unknown subagent tool", "duplicate tool"} {
+	for _, want := range []string{"JSON-style list", "invalid profile", "not exposed to subagents", "MCP tools are not exposed to subagents", "unknown subagent tool", "duplicate tool"} {
 		if !hasDiagnostic(index.Diagnostics, "error", want) {
 			t.Fatalf("missing diagnostic %q in %+v", want, index.Diagnostics)
 		}

@@ -154,6 +154,28 @@ func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
 	}
 }
 
+func TestConfigCloneCopiesMutableSettings(t *testing.T) {
+	cleanEnv(t)
+	cfg, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Data.ProtectedPaths = []string{"secret.txt"}
+	cfg.Data.Headers = map[string]string{"X-Test": "one"}
+
+	clone := cfg.Clone()
+	clone.Data.ProtectedPaths[0] = "changed.txt"
+	clone.Data.Headers["X-Test"] = "two"
+	clone.Data.Headers["X-New"] = "three"
+
+	if cfg.Data.ProtectedPaths[0] != "secret.txt" {
+		t.Fatalf("protected_paths share backing array: %v", cfg.Data.ProtectedPaths)
+	}
+	if cfg.Data.Headers["X-Test"] != "one" || cfg.Data.Headers["X-New"] != "" {
+		t.Fatalf("headers share backing map: %v", cfg.Data.Headers)
+	}
+}
+
 func TestEnvFileRejectsInvalidImageSettings(t *testing.T) {
 	cases := map[string]string{
 		"bool":          "MADHARNESS_MINI_SUPPORTS_IMAGE_INPUT=maybe\n",

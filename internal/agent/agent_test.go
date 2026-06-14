@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,7 +149,7 @@ func TestRunOptionMaxParallelToolCallsReachesModelPayload(t *testing.T) {
 	defer server.Close()
 	cfg.Data.BaseURL = server.URL
 
-	result, _, err := runWithClientOptions("finish", cfg, model.New(cfg), RunOptions{MaxParallelToolCalls: 2})
+	result, _, err := RunWithOptions("finish", cfg, RunOptions{MaxParallelToolCalls: 2, OrchestrationMode: "off"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,65 @@ func TestRunOptionMaxParallelToolCallsReachesModelPayload(t *testing.T) {
 		t.Fatalf("payload = %+v", payload)
 	}
 	if cfg.Data.MaxParallelToolCalls != 1 {
-		t.Fatalf("config was not restored: %d", cfg.Data.MaxParallelToolCalls)
+		t.Fatalf("config was mutated: %d", cfg.Data.MaxParallelToolCalls)
+	}
+}
+
+func TestRunWithOptionsDoesNotMutateSharedConfigDuringConcurrentRuns(t *testing.T) {
+	cfg := testAgentConfig(t)
+	cfg.Data.APIKey = "token"
+	cfg.Data.MaxParallelToolCalls = 1
+	payloads := map[string]bool{}
+	var mu sync.Mutex
+	reached := make(chan string, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload := map[string]any{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			reached <- ""
+			return
+		}
+		task := payloadUserTask(payload)
+		parallel, _ := payload["parallel_tool_calls"].(bool)
+		mu.Lock()
+		payloads[task] = parallel
+		mu.Unlock()
+		reached <- task
+		<-release
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"done"}}]}`))
+	}))
+	defer server.Close()
+	defer releaseAll()
+	cfg.Data.BaseURL = server.URL
+
+	overrideDone := runWithOptionsAsync("override run", cfg, RunOptions{MaxParallelToolCalls: 2, OrchestrationMode: "off"})
+	waitForModelRequest(t, reached, "override run")
+	defaultDone := runWithOptionsAsync("default run", cfg, RunOptions{OrchestrationMode: "off"})
+	waitForModelRequest(t, reached, "default run")
+	releaseAll()
+
+	for _, done := range []<-chan runOutcome{overrideDone, defaultDone} {
+		outcome := <-done
+		if outcome.err != nil {
+			t.Fatal(outcome.err)
+		}
+		if outcome.result != "done" {
+			t.Fatalf("result = %q", outcome.result)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if payloads["override run"] != true {
+		t.Fatalf("override payloads = %v", payloads)
+	}
+	if payloads["default run"] != false {
+		t.Fatalf("default payload inherited override: %v", payloads)
+	}
+	if cfg.Data.MaxParallelToolCalls != 1 {
+		t.Fatalf("config was mutated: %d", cfg.Data.MaxParallelToolCalls)
 	}
 }
 
@@ -300,6 +359,45 @@ func imageSequenceClient() *sequenceClient {
 		}}}},
 		{"choices": []any{map[string]any{"message": map[string]any{"content": "done"}}}},
 	}}
+}
+
+type runOutcome struct {
+	result string
+	err    error
+}
+
+func runWithOptionsAsync(task string, cfg *config.Config, options RunOptions) <-chan runOutcome {
+	done := make(chan runOutcome, 1)
+	go func() {
+		result, _, err := RunWithOptions(task, cfg, options)
+		done <- runOutcome{result: result, err: err}
+	}()
+	return done
+}
+
+func waitForModelRequest(t *testing.T, reached <-chan string, want string) {
+	t.Helper()
+	select {
+	case got := <-reached:
+		if got != want {
+			t.Fatalf("model request task = %q, want %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for model request %q", want)
+	}
+}
+
+func payloadUserTask(payload map[string]any) string {
+	messages, _ := payload["messages"].([]any)
+	for _, item := range messages {
+		message, _ := item.(map[string]any)
+		if message["role"] != "user" {
+			continue
+		}
+		content, _ := message["content"].(string)
+		return content
+	}
+	return ""
 }
 
 func readFileText(t *testing.T, path string) string {

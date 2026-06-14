@@ -87,8 +87,10 @@ tools: ["list_files", "read_file", "search_code"]
 ```
 
 Формат вроде `tools: list_files read_file search_code` считается ошибкой.
-Субагент также не может получить `delegate_task`: рекурсивная делегация
-намеренно запрещена, чтобы минимальный харнесс оставался понятным.
+Список `tools` проверяется против child registry: субагент может получить
+только встроенные tools и `ask_user`. `delegate_task`, `activate_skill`,
+MCP-tools вида `mcp__...` и другие parent/custom tools намеренно не выдаются
+субагентам; `subagents validate` отклонит такие имена.
 
 ## Profiles и tools
 
