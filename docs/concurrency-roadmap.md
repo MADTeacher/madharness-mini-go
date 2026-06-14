@@ -38,6 +38,9 @@ go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 - `write_file`;
 - `apply_patch`;
 - `run_shell`;
+- `start_shell`;
+- `shell_status`;
+- `stop_shell`;
 - `activate_skill`;
 - MCP tools;
 - неизвестные tools без явного effect.
@@ -65,6 +68,32 @@ model client, hook providers, approval prompt guard и workspace scheduler.
 История parent-сессии не копируется в child-сессию: субагент получает только
 свою `task` и явный `context` из аргументов `delegate_task`.
 
+### Managed shell processes
+
+Для долгих dev-сценариев доступны отдельные shell tools:
+
+- `start_shell` запускает разрешённую команду как managed process текущего
+  `run` и возвращает `process_id`;
+- `shell_status` показывает состояние, readiness, exit code и buffered
+  stdout/stderr одного процесса или всего списка;
+- `stop_shell` мягко завершает процесс и при необходимости убивает его.
+
+Процессы живут только в памяти текущего `run`. Root-agent и субагенты видят
+один общий process manager, поэтому parent может поднять backend/frontend, а
+субагент или следующий turn - проверить их через MCP tools. При завершении
+`run` manager останавливает оставшиеся процессы.
+
+`start_shell` использует ту же shell policy, approval flow и проверку
+workspace-relative `cwd`, что и `run_shell`. Опциональный `ready_pattern`
+матчится по stdout/stderr и позволяет дождаться сообщения вроде
+`Listening on ...` без отдельного HTTP-polling. Живой managed process не держит
+global workspace lock: lock берётся только на start/stop, чтобы агент мог
+читать файлы, запускать второй процесс и вызывать MCP tools, пока серверы
+работают.
+
+Trace получает события `process_started`, `process_output`,
+`process_stopped` и `process_failed`.
+
 ### Workspace scheduler
 
 File/shell tools всех сессий проходят через общий workspace scheduler:
@@ -74,6 +103,8 @@ File/shell tools всех сессий проходят через общий wo
 - `apply_patch` сначала вычисляет touched paths, затем берёт write locks на
   весь набор и применяет patch;
 - `run_shell` берёт global exclusive lock на время subprocess.
+- `start_shell` и `stop_shell` берут global exclusive lock только на операцию
+  запуска или остановки managed process.
 
 Locks не удерживаются во время model calls, lifecycle hooks preflight и
 approval prompt.
@@ -101,16 +132,6 @@ Hooks разделены на `enforce` и `observe`. Старый `hooks.json` 
 пределами workspace и невалидные команды не эскалируются.
 
 ## Future work
-
-### Managed shell processes
-
-Долгий shell-запуск пока не реализован и не должен маскироваться обычным
-`run_shell`. Следующий шаг - отдельные tools `start_shell`, `shell_status` и
-`stop_shell`: первый создаёт управляемый процесс и сразу возвращает process id,
-второй читает buffered stdout/stderr и состояние, третий мягко завершает
-процесс и при необходимости убивает его. Lifecycle-события должны быть
-совместимы с текущей event bus: `process_started`, `process_output`,
-`process_stopped` и `process_failed`.
 
 ### MCP multiplexer
 

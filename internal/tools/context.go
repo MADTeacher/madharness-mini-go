@@ -8,6 +8,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
@@ -19,6 +20,7 @@ type Context struct {
 	Trace                 TraceWriter
 	ResourceTracker       ResourceTracker
 	Scheduler             *workspace.Scheduler
+	Processes             *processes.Manager
 	WritableSuffixes      []string
 	WriteScopeDescription string
 }

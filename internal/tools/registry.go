@@ -7,6 +7,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
@@ -25,6 +26,7 @@ type RegistryOptions struct {
 	Trace                 TraceWriter
 	ResourceTracker       ResourceTracker
 	Scheduler             *workspace.Scheduler
+	Processes             *processes.Manager
 	AllowedTools          []string
 	WritableSuffixes      []string
 	WriteScopeDescription string
@@ -44,6 +46,7 @@ func NewRegistryWithOptions(cfg *config.Config, options RegistryOptions, provide
 		Trace:                 options.Trace,
 		ResourceTracker:       options.ResourceTracker,
 		Scheduler:             options.Scheduler,
+		Processes:             options.Processes,
 		WritableSuffixes:      normalizeSuffixes(options.WritableSuffixes),
 		WriteScopeDescription: options.WriteScopeDescription,
 	}

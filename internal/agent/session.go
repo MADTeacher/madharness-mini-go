@@ -7,6 +7,7 @@ import (
 	"github.com/MADTeacher/madharness-mini-go/internal/approval"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
@@ -25,6 +26,7 @@ type sessionShared struct {
 	client           chatClient
 	options          RunOptions
 	scheduler        *workspace.Scheduler
+	processes        *processes.Manager
 	approvalPromptMu sync.Mutex
 }
 
@@ -39,6 +41,7 @@ func newSessionShared(cfg *config.Config, client chatClient, options RunOptions)
 		client:    client,
 		options:   options,
 		scheduler: workspace.NewScheduler(),
+		processes: processes.NewManager(),
 	}
 }
 

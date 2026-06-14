@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools/builtin"
 )
@@ -30,7 +32,7 @@ func TestBuiltinSchemasOrderIncludesReadImage(t *testing.T) {
 		fn := schema["function"].(map[string]any)
 		names = append(names, fn["name"].(string))
 	}
-	want := []string{"list_files", "read_file", "read_image", "write_file", "apply_patch", "search_code", "run_shell"}
+	want := []string{"list_files", "read_file", "read_image", "write_file", "apply_patch", "search_code", "run_shell", "start_shell", "shell_status", "stop_shell"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("names = %v", names)
 	}
@@ -141,6 +143,88 @@ func TestRunShellRejectsInvalidCWD(t *testing.T) {
 	}
 }
 
+func TestManagedShellToolLifecycle(t *testing.T) {
+	cfg, registry, manager := testRegistryWithProcesses(t)
+	defer manager.CloseAll(nil)
+	command := helperCommand(t, "ready")
+
+	start := registry.Call("start_shell", map[string]any{
+		"command":               command,
+		"name":                  "client",
+		"ready_pattern":         "managed ready",
+		"ready_timeout_seconds": 1,
+	})
+	if start["ok"] != true || start["process_id"] != "proc-1" || start["ready"] != true {
+		t.Fatalf("start = %+v", start)
+	}
+	if start["cwd"] != "." || start["pid"].(int) == 0 {
+		t.Fatalf("start cwd/pid = %+v", start)
+	}
+
+	status := registry.Call("shell_status", map[string]any{"name": "client"})
+	if status["ok"] != true || status["running"] != true || !strings.Contains(status["stdout"].(string), "managed ready") {
+		t.Fatalf("status = %+v", status)
+	}
+
+	stop := registry.Call("stop_shell", map[string]any{"process_id": "proc-1", "timeout_seconds": 1})
+	if stop["ok"] != true || stop["running"] != false {
+		t.Fatalf("stop = %+v", stop)
+	}
+
+	statuses, err := manager.Status("proc-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statuses[0].Running {
+		t.Fatalf("manager status = %+v", statuses[0])
+	}
+	_ = cfg
+}
+
+func TestStartShellRejectsInvalidCWD(t *testing.T) {
+	_, registry, manager := testRegistryWithProcesses(t)
+	defer manager.CloseAll(nil)
+	obs := registry.Call("start_shell", map[string]any{"command": helperCommand(t, "ready"), "cwd": "../outside"})
+	if obs["ok"] != false {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
+func TestStartShellRejectsDeniedCommand(t *testing.T) {
+	cfg := testConfigForRegistry(t)
+	cfg.Data.AllowShell = false
+	manager := processes.NewManager()
+	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{Processes: manager}, builtin.Provider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.CloseAll(nil)
+	obs := registry.Call("start_shell", map[string]any{"command": helperCommand(t, "ready")})
+	if obs["ok"] != false || !strings.Contains(obs["summary"].(string), "shell disabled") {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
+func TestStartShellRejectsDuplicateName(t *testing.T) {
+	_, registry, manager := testRegistryWithProcesses(t)
+	defer manager.CloseAll(nil)
+	command := helperCommand(t, "ready")
+	first := registry.Call("start_shell", map[string]any{"command": command, "name": "api"})
+	second := registry.Call("start_shell", map[string]any{"command": command, "name": "api"})
+	if first["ok"] != true || second["ok"] != false {
+		t.Fatalf("first=%+v second=%+v", first, second)
+	}
+}
+
+func TestShellStatusRejectsUnknownProcess(t *testing.T) {
+	_, registry, manager := testRegistryWithProcesses(t)
+	defer manager.CloseAll(nil)
+	obs := registry.Call("shell_status", map[string]any{"process_id": "proc-missing"})
+	if obs["ok"] != false {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
 func TestToolsEmitSkillResourceEvents(t *testing.T) {
 	cfg := testConfigForRegistry(t)
 	if err := os.MkdirAll(filepath.Join(cfg.Root, "skill", "scripts"), 0o755); err != nil {
@@ -194,6 +278,17 @@ func testRegistryWithConfig(t *testing.T) (*config.Config, *tools.Registry) {
 		t.Fatal(err)
 	}
 	return cfg, registry
+}
+
+func testRegistryWithProcesses(t *testing.T) (*config.Config, *tools.Registry, *processes.Manager) {
+	t.Helper()
+	cfg := testConfigForRegistry(t)
+	manager := processes.NewManager()
+	registry, err := tools.NewRegistryWithOptions(cfg, tools.RegistryOptions{Processes: manager}, builtin.Provider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, registry, manager
 }
 
 func testConfigForRegistry(t *testing.T) *config.Config {
@@ -257,4 +352,26 @@ func contains(items []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestHelperBuiltinManagedShell(t *testing.T) {
+	if os.Getenv("GO_WANT_BUILTIN_MANAGED_SHELL_HELPER") != "1" {
+		return
+	}
+	mode := os.Args[len(os.Args)-1]
+	if mode == "ready" {
+		os.Stdout.WriteString("managed ready\n")
+		time.Sleep(30 * time.Second)
+	}
+	os.Exit(0)
+}
+
+func helperCommand(t *testing.T, mode string) string {
+	t.Helper()
+	t.Setenv("GO_WANT_BUILTIN_MANAGED_SHELL_HELPER", "1")
+	return shellQuote(os.Args[0]) + " -test.run=TestHelperBuiltinManagedShell -- " + mode
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

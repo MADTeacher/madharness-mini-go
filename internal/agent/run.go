@@ -55,6 +55,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
 	defer eventBus.Close()
 	shared := newSessionShared(cfg, client, options)
+	defer shared.processes.CloseAll(tr)
 	session := newSession(shared, tr, eventBus, "run")
 	approvalManager := session.approvalManager("run")
 	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "run", HookData: map[string]any{
@@ -125,6 +126,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		Trace:           tr,
 		ResourceTracker: runtime,
 		Scheduler:       shared.scheduler,
+		Processes:       shared.processes,
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {

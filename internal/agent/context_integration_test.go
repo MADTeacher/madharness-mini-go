@@ -48,7 +48,7 @@ func TestAskWritesContextReportToTrace(t *testing.T) {
 
 func TestRunClipsLargeToolOutputBeforeNextModelCall(t *testing.T) {
 	cfg := testAgentConfig(t)
-	cfg.Data.ContextMaxTokens = 4000
+	cfg.Data.ContextMaxTokens = 5000
 	if err := os.WriteFile(filepath.Join(cfg.Root, "huge.txt"), []byte(strings.Repeat("x", 5000)), 0o644); err != nil {
 		t.Fatal(err)
 	}

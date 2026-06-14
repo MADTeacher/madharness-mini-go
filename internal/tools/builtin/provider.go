@@ -23,6 +23,6 @@ func (Provider) Specs(ctx *tools.Context) ([]tools.Spec, error) {
 	specs = append(specs, files[2])
 	specs = append(specs, patchtool.Spec())
 	specs = append(specs, searchtool.Spec())
-	specs = append(specs, shelltool.Spec())
+	specs = append(specs, shelltool.Specs()...)
 	return specs, nil
 }

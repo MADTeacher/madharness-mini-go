@@ -131,6 +131,7 @@ func (s *Session) runSubagentLoop(
 		Approval:              s.approvalManager("subagent"),
 		Trace:                 s.trace,
 		Scheduler:             s.shared.scheduler,
+		Processes:             s.shared.processes,
 		AllowedTools:          allowedTools,
 		WritableSuffixes:      subagentWritableSuffixes(subagent),
 		WriteScopeDescription: subagentWriteScopeDescription(subagent),

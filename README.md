@@ -39,6 +39,19 @@ go run ./cmd/madharness-mini ask "Объясни, что делает этот �
 go run ./cmd/madharness-mini run "Найди команду для запуска тестов и объясни, что она проверяет"
 ```
 
+Для сценариев с долгими dev-процессами агенту доступны managed shell tools:
+`start_shell`, `shell_status` и `stop_shell`. Например, задача может попросить
+поднять backend и frontend, дождаться startup-строк через `ready_pattern`, а
+затем проверить клиентскую часть через подключённые MCP tools:
+
+```bash
+go run ./cmd/madharness-mini run \
+  "Запусти backend и frontend как managed shell processes, дождись готовности клиента и проверь основной экран через MCP"
+```
+
+Такие процессы живут только внутри текущего `run` и автоматически завершаются
+при выходе harness.
+
 Для параллельного выполнения соседних read-only tools внутри одного turn-а:
 
 ```bash

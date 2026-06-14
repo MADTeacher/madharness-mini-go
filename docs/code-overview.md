@@ -17,6 +17,7 @@
 | `internal/agent` | Собирает запуск и agent sessions: trace, hooks, model client, skills, subagents, MCP, context и registry. |
 | `internal/agent/turnexec` | Планирует read-only и delegate batches и выполняет их конкурентно внутри одного turn-а. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
+| `internal/processes` | Управляет долгоживущими shell-процессами одного `run`. |
 | `internal/tools` | Описывает встроенные инструменты и общий `Registry`. |
 | `internal/workspace` | Координирует path-level и global locks для tools разных agent sessions. |
 | `internal/policy` | Проверяет workspace-границы, protected paths и shell-команды. |
@@ -28,7 +29,7 @@
 
 1. `internal/cli` создаёт `config.Config`.
 2. `agent.RunWithOptions()` создаёт parent `Trace`, `hooks.Manager`,
-   `events.Bus` и root `Session`.
+   `events.Bus`, общий process manager и root `Session`.
 3. Event bus публикует `session_start`; trace уже содержит начальный
    `session_start` от `trace.New()`, hooks получают project payload.
 4. Загружаются skills, subagents и MCP providers.
@@ -49,7 +50,9 @@
     может быть заблокирован enforce hook-ом до CLI prompt.
 11. После observation вызывается `after_tool_call`, а commit в context идёт в
     исходном порядке `tool_calls`.
-12. При нормальном завершении hooks получают `session_end`, при ошибке -
+12. Перед выходом из `run` общий process manager останавливает оставшиеся
+    managed shell processes.
+13. При нормальном завершении hooks получают `session_end`, при ошибке -
     `session_error`.
 
 ## Границы hooks
@@ -70,7 +73,8 @@ redaction payload и запись ошибок в trace. Hooks добавляю�
 
 Главный агент и каждый субагент выполняются как отдельные `agent.Session`.
 Сессии разделяют model client, workspace scheduler и guarded approval prompter,
-но имеют отдельные context, registry, event bus и trace.
+managed shell processes, но имеют отдельные context, registry, event bus и
+trace.
 
 ## Тестовое покрытие
 
