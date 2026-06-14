@@ -2,6 +2,7 @@ package agent
 
 import (
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
@@ -22,14 +23,16 @@ func askWithClient(task string, cfg *config.Config, client chatClient) (string, 
 		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
 		return "", tr.Path, err
 	}
-	hookManager.Emit("session_start", "ask", map[string]any{
+	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
+	defer eventBus.Close()
+	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "ask", HookData: map[string]any{
 		"task_preview": truncateForHook(task, 1000),
 		"cwd":          cfg.CWD,
-	})
+	}})
 	context, err := BaseContext(cfg, task)
 	if err != nil {
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "ask", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "ask", err, nil)
 		return "", tr.Path, err
 	}
 	messages, err := context.Messages(nil)
@@ -38,40 +41,47 @@ func askWithClient(task string, cfg *config.Config, client chatClient) (string, 
 			"error":          err.Error(),
 			"context_report": safeContextReport(context),
 		})
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "ask", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "ask", err, nil)
 		return "", tr.Path, err
 	}
 	contextReport := context.Report()
-	_ = tr.Write("model_call_started", map[string]any{
-		"tools_count":    0,
-		"context_report": contextReport,
-	})
-	hookManager.Emit("before_model_call", "ask", map[string]any{
-		"tools_count":    0,
-		"context_report": contextReport,
+	publishEvent(eventBus, events.Event{
+		Name: "before_model_call",
+		Kind: "ask",
+		HookData: map[string]any{
+			"tools_count":    0,
+			"context_report": contextReport,
+		},
+		TraceName: "model_call_started",
+		TraceData: map[string]any{
+			"tools_count":    0,
+			"context_report": contextReport,
+		},
 	})
 	raw, err := callModelWithRateLimitRetry(client, tr, messages, nil, nil)
 	if err != nil {
 		_ = tr.Write("model_error", map[string]any{"error": err.Error()})
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "ask", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "ask", err, nil)
 		return "", tr.Path, err
 	}
-	_ = tr.Write("model_call_finished", map[string]any{"raw": raw})
 	message, err := responseMessage(raw)
 	if err != nil {
 		_ = tr.Write("model_error", map[string]any{"error": err.Error()})
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "ask", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "ask", err, nil)
 		return "", tr.Path, err
 	}
-	hookManager.Emit("after_model_call", "ask", map[string]any{
-		"message": modelMessageSummary(message),
+	publishEvent(eventBus, events.Event{
+		Name:      "after_model_call",
+		Kind:      "ask",
+		HookData:  map[string]any{"message": modelMessageSummary(message)},
+		TraceName: "model_call_finished",
+		TraceData: map[string]any{"raw": raw},
 	})
 	content := messageContent(message)
-	_ = tr.Write("session_end", map[string]any{"result": content})
-	hookManager.Emit("session_end", "ask", map[string]any{
+	publishSessionEnd(eventBus, "ask", content, map[string]any{
 		"status":         "done",
 		"turns":          1,
 		"result_preview": truncateForHook(content, 1000),

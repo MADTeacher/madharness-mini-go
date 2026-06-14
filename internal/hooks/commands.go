@@ -48,7 +48,7 @@ func (p CommandProvider) Matches(event Event) bool {
 		if key == "kind" {
 			actual = event.Kind
 		} else {
-			actual = event.Data[key]
+			actual = event.HookData[key]
 		}
 		if !matchValue(actual, expected) {
 			return false
@@ -59,7 +59,7 @@ func (p CommandProvider) Matches(event Event) bool {
 
 // Handle передаёт событие в stdin и читает JSON-решение из stdout.
 func (p CommandProvider) Handle(event Event) (Decision, error) {
-	payload, err := json.Marshal(event.Map())
+	payload, err := json.Marshal(hookPayload(event))
 	if err != nil {
 		return Allow(), err
 	}
@@ -86,6 +86,16 @@ func (p CommandProvider) Handle(event Event) (Decision, error) {
 		return Allow(), fmt.Errorf("%s", detail)
 	}
 	return decisionFromStdout(stdout.String())
+}
+
+func hookPayload(event Event) map[string]any {
+	return map[string]any{
+		"version":  SchemaVersion,
+		"event":    event.Name,
+		"kind":     event.Kind,
+		"trace_id": event.TraceID,
+		"data":     event.HookData,
+	}
 }
 
 func decisionFromStdout(stdout string) (Decision, error) {
@@ -120,7 +130,7 @@ func decisionFromStdout(stdout string) (Decision, error) {
 		if block == "" {
 			block = "blocked by hook"
 		}
-		return Decision{OK: false, Block: block, Message: message}, nil
+		return Decision{OK: false, Block: block, Message: message, Source: "hook"}, nil
 	}
 	return Decision{OK: true, Message: message}, nil
 }

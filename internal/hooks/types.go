@@ -1,8 +1,17 @@
 // Package hooks реализует lifecycle hooks проекта вокруг агентского цикла.
 package hooks
 
+import "github.com/MADTeacher/madharness-mini-go/internal/events"
+
 // SchemaVersion фиксирует версию JSON-контракта события для hook-команды.
 const SchemaVersion = 1
+
+const (
+	// ModeEnforce оставляет hook на синхронном критическом пути.
+	ModeEnforce = "enforce"
+	// ModeObserve запускает hook асинхронно без права блокировать действие.
+	ModeObserve = "observe"
+)
 
 // Events перечисляет события жизненного цикла, доступные проектным hooks.
 var Events = map[string]bool{
@@ -16,34 +25,14 @@ var Events = map[string]bool{
 }
 
 // Event описывает одно событие harness, которое hook получает через stdin.
-type Event struct {
-	Name    string
-	Kind    string
-	TraceID string
-	Data    map[string]any
-}
-
-// Map возвращает стабильный JSON-совместимый payload для hook-команды.
-func (e Event) Map() map[string]any {
-	return map[string]any{
-		"version":  SchemaVersion,
-		"event":    e.Name,
-		"kind":     e.Kind,
-		"trace_id": e.TraceID,
-		"data":     e.Data,
-	}
-}
+type Event = events.Event
 
 // Decision хранит решение hook: продолжить выполнение или заблокировать шаг.
-type Decision struct {
-	OK      bool
-	Block   string
-	Message string
-}
+type Decision = events.Decision
 
 // Allow возвращает нейтральное решение, которое не меняет ход agent loop.
 func Allow() Decision {
-	return Decision{OK: true}
+	return events.Allow()
 }
 
 // Provider обрабатывает одно lifecycle-событие.

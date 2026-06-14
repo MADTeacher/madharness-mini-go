@@ -4,9 +4,10 @@ Hooks - это небольшая точка расширения `madharness-mi
 создаёт события жизненного цикла `ask`, `run` и `subagent`, а проект может
 подключить локальные обработчики через `.madharness-mini/hooks.json`.
 
-Механизм встроен в текущий код. Это не глобальная event bus и не фреймворк
-плагинов: `internal/agent` явно вызывает `hooks.Manager.Emit()` в нескольких
-lifecycle-точках, а manager синхронно запускает подходящие command hooks.
+Механизм встроен в текущий код поверх внутренней event bus. `internal/agent`
+публикует lifecycle-событие один раз, `internal/events` передаёт его
+подписчикам, trace сохраняет старые JSONL-события, а `hooks.Manager` запускает
+подходящие command hooks.
 
 Если `.madharness-mini/hooks.json` отсутствует, hooks выключены и запуск ведёт
 себя как раньше.
@@ -15,26 +16,28 @@ lifecycle-точках, а manager синхронно запускает под�
 
 | Модуль | Роль |
 | --- | --- |
+| `internal/events` | Внутренняя шина lifecycle-событий и trace subscriber. |
 | `internal/hooks/types.go` | Публичные типы `Event`, `Decision`, `Provider` и список событий. |
 | `internal/hooks/config.go` | Читает `.madharness-mini/hooks.json` и проверяет поля обработчиков. |
 | `internal/hooks/commands.go` | Запускает пользовательские команды через `exec.CommandContext` без shell. |
-| `internal/hooks/manager.go` | Синхронно вызывает hooks по порядку, пишет hook-события в trace и возвращает первое блокирующее решение. |
+| `internal/hooks/manager.go` | Разделяет hooks на `enforce` и `observe`, пишет hook-события в trace и возвращает blocking-решение только для `before_tool_call`. |
+| `internal/hooks/observe_queue.go` | Держит ограниченную очередь observe hooks и дожидается drain в конце запуска. |
 | `internal/hooks/redaction.go` | Обрезает большие payload и прячет очевидные секретные поля перед передачей в hook. |
 
 Точки подключения:
 
 | Файл | Что делает |
 | --- | --- |
-| `internal/agent/ask.go` | Создаёт `hooks.Manager` в `Ask`, отправляет события model call и сессии. |
-| `internal/agent/run.go` | Создаёт `hooks.Manager` в `Run`, передаёт его в parent loop и субагентов. |
-| `internal/agent/loop.go` | Отправляет model/tool lifecycle events и применяет блокировку `before_tool_call`. |
-| `internal/agent/subagent_runner.go` | Передаёт те же hooks в дочерний trace субагента через `WithTrace()`. |
+| `internal/agent/ask.go` | Создаёт `events.Bus` и публикует события model call и сессии. |
+| `internal/agent/run.go` | Создаёт `events.Bus`, передаёт его в parent loop и субагентов. |
+| `internal/agent/loop.go` | Публикует model/tool lifecycle events и применяет блокировку `before_tool_call`. |
+| `internal/agent/subagent_runner.go` | Передаёт те же подписчики в дочерний trace субагента через `Bus.WithTrace()`. |
 
 ## Поток выполнения
 
 ```mermaid
 flowchart TD
-    A["ask/run создаёт Trace"] --> B["hooks.Manager читает hooks.json"]
+    A["ask/run создаёт Trace"] --> B["events.Bus + hooks.Manager"]
     B --> C["session_start"]
     C --> D["ContextManager собирает messages"]
     D --> E["before_model_call"]
@@ -51,8 +54,10 @@ flowchart TD
     N --> D
 ```
 
-Главное правило: только `before_tool_call` может остановить действие. Остальные
-events нужны для аудита, логирования и внешней автоматизации.
+Главное правило: только `enforce` hook на `before_tool_call` может остановить
+действие. Остальные events нужны для аудита, логирования и внешней
+автоматизации. `observe` hooks никогда не блокируют действие, даже если
+возвращают `{ "ok": false }`.
 
 Если hook блокирует tool, handler инструмента не запускается. Harness создаёт
 обычное observation:
@@ -102,6 +107,7 @@ events нужны для аудита, логирования и внешней 
 | `id` | Да | Короткое безопасное имя для trace. Разрешены ASCII-буквы, цифры, `_`, `-`, `.`. |
 | `event` | Да | Событие harness, например `before_tool_call`. |
 | `command` | Да | Исполняемая команда. Запускается без shell. |
+| `mode` | Нет | `enforce` или `observe`. По умолчанию `enforce`. |
 | `args` | Нет | Список строковых аргументов. По умолчанию пустой список. |
 | `cwd` | Нет | Рабочий каталог внутри workspace. По умолчанию `"."`. |
 | `env` | Нет | Явные переменные окружения для hook-команды. |
@@ -125,6 +131,19 @@ events нужны для аудита, логирования и внешней 
 
 ```json
 { "match": { "tool": ["write_file", "apply_patch", "run_shell"] } }
+```
+
+Пример наблюдающего hook:
+
+```json
+{
+  "id": "audit-tools",
+  "mode": "observe",
+  "event": "after_tool_call",
+  "command": "python3",
+  "args": ["scripts/hooks/audit.py"],
+  "cwd": "."
+}
 ```
 
 ## События
@@ -243,9 +262,13 @@ Hooks пишут события в тот же JSONL trace, что и model/tool
 | `hook_blocked` | Hook вернул `ok: false` или `block`. |
 | `hook_failed` | Hook упал, вернул невалидный JSON, завершился с non-zero code или вышел по timeout. |
 
-Ошибки observe-hooks не ломают запуск. Если `before_model_call` hook упал,
-trace получит `hook_failed`, но модель всё равно будет вызвана. Блокировка
-возможна только через валидный JSON-ответ на `before_tool_call`.
+Ошибки hooks не ломают запуск. Если `before_model_call` hook упал, trace
+получит `hook_failed`, но модель всё равно будет вызвана. Блокировка возможна
+только через валидный JSON-ответ `enforce` hook на `before_tool_call`.
+
+Observe hooks выполняются через очередь 32 элемента. Если очередь переполнена,
+trace получает `hook_failed` с причиной `observe hook queue full`, а агентский
+цикл продолжает работу.
 
 В trace tool call с блокировкой выглядит как обычное `tool_observation` с
 `ok=false` и `hook_blocked=true`. Это важно: модель не получает отдельный новый
@@ -298,8 +321,10 @@ shell-команды. Hooks добавляют проектные правила
 | Hook завершился с non-zero code | Пишется `hook_failed`, запуск продолжается. |
 | Hook вернул невалидный JSON | Пишется `hook_failed`, запуск продолжается. |
 | Hook превысил timeout | Пишется `hook_failed`, запуск продолжается. |
-| Hook вернул `ok: false` на `before_tool_call` | Tool handler не запускается, модель получает fail-observation. |
-| Hook вернул `ok: false` на другом событии | Manager запишет `hook_blocked`; ход выполнения меняет только `before_tool_call`. |
+| Enforce hook вернул `ok: false` на `before_tool_call` | Tool handler не запускается, модель получает fail-observation. |
+| Enforce hook вернул `ok: false` на другом событии | Manager запишет `hook_blocked`; ход выполнения не меняется. |
+| Observe hook вернул `ok: false` | Manager запишет `hook_blocked`; ход выполнения не меняется. |
+| Observe queue переполнена | Пишется `hook_failed`, запуск продолжается. |
 
 ## Что проверять тестами
 
@@ -307,6 +332,8 @@ shell-команды. Hooks добавляют проектные правила
 
 - без `hooks.json` manager работает как no-op;
 - `before_tool_call` блокирует tool до вызова handler;
+- observe hook на `before_tool_call` не блокирует handler;
+- переполнение observe queue пишется в trace;
 - падение hook-процесса пишется в trace и не ломает `ask`;
 - hook не наследует `MADHARNESS_MINI_API_KEY`;
 - субагент пишет hook-события в дочерний trace с `kind: "subagent"`.

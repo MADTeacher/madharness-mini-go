@@ -6,6 +6,7 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
 	"github.com/MADTeacher/madharness-mini-go/internal/mcp"
 	"github.com/MADTeacher/madharness-mini-go/internal/model"
@@ -46,16 +47,18 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
 		return "", tr.Path, err
 	}
-	hookManager.Emit("session_start", "run", map[string]any{
+	eventBus := events.NewBus(events.NewTraceSubscriber(tr), hookManager)
+	defer eventBus.Close()
+	publishEvent(eventBus, events.Event{Name: "session_start", Kind: "run", HookData: map[string]any{
 		"task_preview": truncateForHook(task, 1000),
 		"cwd":          cfg.CWD,
-	})
+	}})
 	index := skills.Discover(cfg)
 	subagentIndex := subagents.Discover(cfg)
 	orchestration, err := subagents.ResolveOrchestrationMode(cfg, task, options.OrchestrationMode)
 	if err != nil {
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "run", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "run", err, nil)
 		return "", tr.Path, err
 	}
 	_ = tr.Write("orchestration_mode", map[string]any{
@@ -85,8 +88,8 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 	if len(selection.Unknown) > 0 {
 		names := strings.Join(selection.Unknown, ", ")
 		err := fmt.Errorf("unknown skill: %s", names)
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "run", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "run", err, nil)
 		return "", tr.Path, err
 	}
 	runtime := skills.NewRuntime(cfg, index)
@@ -102,7 +105,7 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		toolProviders = append(toolProviders, subagents.OrchestratorProvider{
 			Index: subagentIndex,
 			Runner: func(ctx *tools.Context, subagent subagents.Subagent, args map[string]any) tools.Observation {
-				return runSubagent(cfg, client, tr, subagent, args, hookManager)
+				return runSubagent(cfg, client, tr, subagent, args, eventBus)
 			},
 		})
 	}
@@ -115,15 +118,15 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		AllowedTools:    subagents.ParentAllowedTools(orchestration.Effective),
 	}, toolProviders...)
 	if err != nil {
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "run", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "run", err, nil)
 		return "", tr.Path, err
 	}
 	defer registry.Close()
 	context, err := BaseContext(cfg, task, contextProviders...)
 	if err != nil {
-		_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-		emitSessionError(hookManager, "run", err, nil)
+		publishSessionEndTrace(eventBus, "error: "+err.Error())
+		emitSessionError(eventBus, "run", err, nil)
 		return "", tr.Path, err
 	}
 	if orchestration.Effective == "required" {
@@ -133,14 +136,14 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		obs := runtime.Activate(name, "explicit")
 		if obs["ok"] != true {
 			err := fmt.Errorf("%v", obs["summary"])
-			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			emitSessionError(hookManager, "run", err, nil)
+			publishSessionEndTrace(eventBus, "error: "+err.Error())
+			emitSessionError(eventBus, "run", err, nil)
 			return "", tr.Path, err
 		}
 		applyHiddenObservationEffects(context, tr, obs)
 	}
 	result, err := runModelLoop(client, tr, context, registry, cfg.Data.MaxTurns, loopOptions{
-		Hooks:                hookManager,
+		Events:               eventBus,
 		Kind:                 "run",
 		MaxParallelToolCalls: resolvedMaxParallelToolCalls(cfg, options),
 	})

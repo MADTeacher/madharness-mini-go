@@ -73,6 +73,49 @@ func TestHookProcessFailureIsTracedWithoutBreakingAsk(t *testing.T) {
 	}
 }
 
+func TestObserveBeforeToolCallHookCannotBlockHandler(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script fixture is POSIX-specific")
+	}
+	cfg := testAgentConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.Root, "note.txt"), []byte("hello from tool\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeAgentHook(t, cfg.Root, "observe_deny.sh", "#!/bin/sh\nprintf '{\"ok\":false,\"block\":\"observe cannot block\"}'\n")
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"observe-deny","mode":"observe","event":"before_tool_call","match":{"tool":"read_file"},"command":"./observe_deny.sh","cwd":".","timeout_seconds":3}]}`)
+	client := &sequenceClient{responses: []map[string]any{
+		{"choices": []any{map[string]any{"message": map[string]any{
+			"content": nil,
+			"tool_calls": []any{map[string]any{
+				"id":       "call_read",
+				"function": map[string]any{"name": "read_file", "arguments": `{"path":"note.txt"}`},
+			}},
+		}}}},
+		{"choices": []any{map[string]any{"message": map[string]any{"content": "done"}}}},
+	}}
+
+	result, tracePath, err := runWithClient("read note", cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result != "done" || len(client.seen) != 2 {
+		t.Fatalf("result=%q seen=%d", result, len(client.seen))
+	}
+	secondRequest, _ := json.Marshal(client.seen[1])
+	if strings.Contains(string(secondRequest), "blocked by hook") || !strings.Contains(string(secondRequest), "hello from tool") {
+		t.Fatalf("second request = %s", secondRequest)
+	}
+	events := readTraceEvents(t, tracePath)
+	if !hasEvent(events, "hook_blocked") {
+		t.Fatalf("observe hook_blocked not found: %#v", events)
+	}
+	observation := firstObservation(events, "read_file")
+	if observation["ok"] != true || observation["hook_blocked"] == true {
+		t.Fatalf("observation = %#v", observation)
+	}
+}
+
 func TestSubagentHookUsesChildTraceAndKind(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script fixture is POSIX-specific")

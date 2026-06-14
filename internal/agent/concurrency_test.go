@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
+	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
@@ -58,6 +59,53 @@ func TestRunModelLoopKeepsWriteToolAsBarrier(t *testing.T) {
 	close(releaseWrite)
 	waitToolStarted(t, started, "slow_read_b")
 	waitLoopDone(t, done)
+}
+
+func TestRunModelLoopCommitsParallelReadTraceInToolCallOrder(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan string, 2)
+	provider := concurrencyProvider{
+		"slow_read_a": blockingTool("slow_read_a", tools.EffectRead, started, release),
+		"slow_read_b": instantTool("slow_read_b", tools.EffectRead, started),
+	}
+	cfg := testAgentConfig(t)
+	tr, err := trace.New(cfg, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := agentcontext.BaseContext(cfg, "test trace order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.NewRegistry(cfg, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &sequenceClient{responses: []map[string]any{
+		concurrencyToolCallResponse("slow_read_a", "slow_read_b"),
+		contentResponse("done"),
+	}}
+	bus := events.NewBus(events.NewTraceSubscriber(tr))
+	done := make(chan error, 1)
+	go func() {
+		result, err := runModelLoop(client, tr, context, registry, 3, loopOptions{
+			Events:               bus,
+			MaxParallelToolCalls: 2,
+		})
+		if err == nil && result.Result != "done" {
+			err = errUnexpectedResult(result.Result)
+		}
+		done <- err
+	}()
+
+	waitToolsStarted(t, started, "slow_read_a", "slow_read_b")
+	close(release)
+	waitLoopDone(t, done)
+
+	observed := traceObservationTools(t, tr.Path)
+	if len(observed) != 2 || observed[0] != "slow_read_a" || observed[1] != "slow_read_b" {
+		t.Fatalf("tool observations = %#v", observed)
+	}
 }
 
 func runConcurrencyLoop(t *testing.T, provider concurrencyProvider, maxParallel int, names ...string) <-chan error {
@@ -194,6 +242,18 @@ func waitLoopDone(t *testing.T, done <-chan error) {
 
 func errUnexpectedResult(result string) error {
 	return unexpectedResultError{result: result}
+}
+
+func traceObservationTools(t *testing.T, path string) []string {
+	t.Helper()
+	events := readTraceEvents(t, path)
+	tools := []string{}
+	for _, event := range events {
+		if event["event"] == "tool_observation" {
+			tools = append(tools, event["tool"].(string))
+		}
+	}
+	return tools
 }
 
 type unexpectedResultError struct {

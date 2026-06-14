@@ -3,17 +3,34 @@ package agent
 import (
 	"fmt"
 
-	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
+	"github.com/MADTeacher/madharness-mini-go/internal/events"
 )
 
-func emitHook(manager *hooks.Manager, name string, kind string, data map[string]any) hooks.Decision {
-	if manager == nil {
-		return hooks.Allow()
+func publishEvent(bus *events.Bus, event events.Event) events.Decision {
+	if bus == nil {
+		return events.Allow()
 	}
-	return manager.Emit(name, kind, data)
+	return bus.Publish(event)
 }
 
-func emitSessionError(manager *hooks.Manager, kind string, err error, turn any) {
+func publishSessionEnd(bus *events.Bus, kind string, result string, hookData map[string]any) {
+	publishEvent(bus, events.Event{
+		Name:      "session_end",
+		Kind:      kind,
+		HookData:  hookData,
+		TraceName: "session_end",
+		TraceData: map[string]any{"result": result},
+	})
+}
+
+func publishSessionEndTrace(bus *events.Bus, result string) {
+	publishEvent(bus, events.Event{
+		TraceName: "session_end",
+		TraceData: map[string]any{"result": result},
+	})
+}
+
+func emitSessionError(bus *events.Bus, kind string, err error, turn any) {
 	data := map[string]any{
 		"error_type": errorType(err),
 		"message":    err.Error(),
@@ -21,7 +38,7 @@ func emitSessionError(manager *hooks.Manager, kind string, err error, turn any) 
 	if turn != nil {
 		data["turn"] = turn
 	}
-	emitHook(manager, "session_error", kind, data)
+	publishEvent(bus, events.Event{Name: "session_error", Kind: kind, HookData: data})
 }
 
 func modelMessageSummary(message map[string]any) map[string]any {

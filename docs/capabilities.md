@@ -35,8 +35,12 @@ Hook - это локальная command handler, которая получае�
 События: `session_start`, `before_model_call`, `after_model_call`,
 `before_tool_call`, `after_tool_call`, `session_end`, `session_error`.
 
-Только `before_tool_call` может остановить действие. Для блокировки hook
-возвращает JSON:
+По умолчанию hook работает в режиме `enforce`. Также можно указать
+`"mode": "observe"`: такой hook выполняется через очередь и никогда не
+блокирует действие.
+
+Только enforce hook на `before_tool_call` может остановить действие. Для
+блокировки hook возвращает JSON:
 
 ```json
 { "ok": false, "block": "причина блокировки" }

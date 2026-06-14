@@ -2,7 +2,7 @@
 
 Этот документ отделяет реализованное поведение v1 от следующих шагов. Ветка
 остаётся учебной: конкурентность добавляется там, где она не ломает порядок
-сообщений модели, hooks и trace.
+сообщений модели, event bus, hooks и trace.
 
 ## V1 implemented behavior
 
@@ -43,19 +43,21 @@ effects, trace events и `RecordToolResult()` строго в исходном �
 краткую строку `concurrency` с max parallel, количеством read batches и
 barrier-групп.
 
-## Future work
-
 ### Внутренняя event bus
 
-Сейчас lifecycle-точки всё ещё вызывают trace и hooks напрямую. Следующий шаг -
-единая внутренняя шина событий или middleware pipeline, где событие публикуется
-один раз, а trace, hooks, metrics и project policy получают его как подписчики.
+Lifecycle-точки `ask`, `run` и `subagent` публикуются через `internal/events`.
+Trace и hooks получают одно событие как подписчики: trace сохраняет прежние
+JSONL event names, а hooks получают прежний JSON-контракт `version: 1`.
 
 ### Observe/enforce hooks
 
-Hooks стоит разделить на наблюдающие и блокирующие. `enforce` hooks должны
-оставаться синхронными на критическом пути, а `observe` hooks можно выполнять
-через ограниченную очередь без права блокировать действие.
+Hooks разделены на `enforce` и `observe`. Старый `hooks.json` без `mode`
+остаётся `enforce`. `enforce` hooks остаются синхронными, но блокировать ход
+может только `before_tool_call`. `observe` hooks выполняются через очередь 32
+элемента и никогда не блокируют действие; при переполнении пишется
+`hook_failed`.
+
+## Future work
 
 ### Parallel subagents
 

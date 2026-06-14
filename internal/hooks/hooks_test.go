@@ -1,14 +1,9 @@
 package hooks
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
@@ -53,6 +48,11 @@ func TestLoadCommandConfigsValidatesInput(t *testing.T) {
 			want: "event must be one of",
 		},
 		{
+			name: "invalid mode",
+			body: `{"hooks":[{"id":"bad","mode":"async","event":"session_start","command":"true"}]}`,
+			want: "mode must be enforce or observe",
+		},
+		{
 			name: "invalid cwd",
 			body: `{"hooks":[{"id":"bad","event":"session_start","command":"true","cwd":"../outside"}]}`,
 			want: "path outside workspace",
@@ -90,6 +90,19 @@ func TestLoadCommandConfigsValidatesInput(t *testing.T) {
 	}
 }
 
+func TestLoadCommandConfigsDefaultsModeToEnforce(t *testing.T) {
+	cfg := testHooksConfig(t)
+	writeHooksJSON(t, cfg, `{"hooks":[{"id":"audit","event":"session_start","command":"true"}]}`)
+
+	configs, err := LoadCommandConfigs(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configs) != 1 || configs[0].Mode != ModeEnforce {
+		t.Fatalf("configs = %#v", configs)
+	}
+}
+
 func TestCommandProviderMatchesKindToolAndLists(t *testing.T) {
 	provider := CommandProvider{Config: CommandConfig{
 		ID:    "guard",
@@ -101,14 +114,14 @@ func TestCommandProviderMatchesKindToolAndLists(t *testing.T) {
 	}}
 
 	matched := provider.Matches(Event{
-		Name: "before_tool_call",
-		Kind: "run",
-		Data: map[string]any{"tool": "run_shell"},
+		Name:     "before_tool_call",
+		Kind:     "run",
+		HookData: map[string]any{"tool": "run_shell"},
 	})
 	missed := provider.Matches(Event{
-		Name: "before_tool_call",
-		Kind: "ask",
-		Data: map[string]any{"tool": "run_shell"},
+		Name:     "before_tool_call",
+		Kind:     "ask",
+		HookData: map[string]any{"tool": "run_shell"},
 	})
 
 	if !matched || missed {
@@ -142,92 +155,4 @@ func TestCompactPayloadRedactsAndClips(t *testing.T) {
 	if len(items) != 21 || !strings.Contains(items[20].(string), "<clipped 5 items>") {
 		t.Fatalf("items = %#v", items)
 	}
-}
-
-func TestCommandHookDoesNotInheritMadharnessEnv(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell script fixture is POSIX-specific")
-	}
-	cfg := testHooksConfig(t)
-	script := filepath.Join(cfg.Root, "check_env.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nif [ -n \"$MADHARNESS_MINI_API_KEY\" ]; then echo '{\"ok\":false,\"block\":\"leaked\"}'; else echo '{\"ok\":true,\"message\":\"clean\"}'; fi\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeHooksJSON(t, cfg, `{"hooks":[{"id":"env-check","event":"session_start","command":"`+script+`","cwd":".","timeout_seconds":3}]}`)
-	tr, err := trace.New(cfg, "run")
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager, err := FromConfig(cfg, tr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("MADHARNESS_MINI_API_KEY", "secret")
-
-	decision := manager.Emit("session_start", "run", map[string]any{})
-
-	if !decision.OK {
-		t.Fatalf("decision = %#v", decision)
-	}
-	events := readHookTrace(t, tr.Path)
-	found := false
-	for _, event := range events {
-		if event["event"] == "hook_finished" && event["message"] == "clean" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("hook_finished clean not found: %#v", events)
-	}
-}
-
-func testHooksConfig(t *testing.T) *config.Config {
-	t.Helper()
-	t.Setenv("MADHARNESS_MINI_MODEL", "")
-	t.Setenv("MADHARNESS_MINI_BASE_URL", "")
-	t.Setenv("MADHARNESS_MINI_API_KEY", "")
-	t.Setenv("MADHARNESS_MINI_MAX_PARALLEL_TOOL_CALLS", "")
-	cfg, err := config.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cfg.EnsureDirs(); err != nil {
-		t.Fatal(err)
-	}
-	return cfg
-}
-
-func writeHooksJSON(t *testing.T, cfg *config.Config, body string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(cfg.StateDir, "hooks.json"), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func readHookTrace(t *testing.T, path string) []map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	events := []map[string]any{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		event := map[string]any{}
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatal(err)
-		}
-		events = append(events, event)
-	}
-	return events
-}
-
-func manyItems(count int) []any {
-	items := make([]any, 0, count)
-	for index := 0; index < count; index++ {
-		items = append(items, index)
-	}
-	return items
 }

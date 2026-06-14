@@ -14,6 +14,7 @@ import (
 // CommandConfig описывает один hook из `.madharness-mini/hooks.json`.
 type CommandConfig struct {
 	ID             string
+	Mode           string
 	Event          string
 	Match          map[string]any
 	Command        string
@@ -69,6 +70,10 @@ func parseCommandConfig(index int, item map[string]any, pol *policy.Policy) (Com
 	if !ok || !safeHookID(id) {
 		return CommandConfig{}, fmt.Errorf("invalid hook #%d: id must be non-empty safe string", index)
 	}
+	mode, err := hookMode(item)
+	if err != nil {
+		return CommandConfig{}, fmt.Errorf("invalid hook %s: mode must be enforce or observe", id)
+	}
 	event, ok := item["event"].(string)
 	if !ok || !Events[event] {
 		return CommandConfig{}, fmt.Errorf("invalid hook %s: event must be one of: %s", id, eventNames())
@@ -110,6 +115,7 @@ func parseCommandConfig(index int, item map[string]any, pol *policy.Policy) (Com
 	}
 	return CommandConfig{
 		ID:             id,
+		Mode:           mode,
 		Event:          event,
 		Match:          match,
 		Command:        command,
@@ -118,6 +124,25 @@ func parseCommandConfig(index int, item map[string]any, pol *policy.Policy) (Com
 		Env:            env,
 		TimeoutSeconds: timeout,
 	}, nil
+}
+
+func hookMode(item map[string]any) (string, error) {
+	raw, exists := item["mode"]
+	if !exists {
+		return ModeEnforce, nil
+	}
+	mode, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("invalid mode")
+	}
+	switch strings.TrimSpace(mode) {
+	case "", ModeEnforce:
+		return ModeEnforce, nil
+	case ModeObserve:
+		return ModeObserve, nil
+	default:
+		return "", fmt.Errorf("invalid mode")
+	}
 }
 
 func safeHookID(value string) bool {

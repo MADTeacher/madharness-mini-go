@@ -6,14 +6,14 @@ import (
 
 	"github.com/MADTeacher/madharness-mini-go/internal/agent/turnexec"
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
-	"github.com/MADTeacher/madharness-mini-go/internal/hooks"
+	"github.com/MADTeacher/madharness-mini-go/internal/events"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 	"github.com/MADTeacher/madharness-mini-go/internal/trace"
 )
 
 type loopOptions struct {
 	StopOnUserInput      bool
-	Hooks                *hooks.Manager
+	Events               *events.Bus
 	Kind                 string
 	MaxParallelToolCalls int
 }
@@ -46,53 +46,62 @@ func runModelLoop(
 				"error":          err.Error(),
 				"context_report": safeContextReport(context),
 			})
-			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			emitSessionError(options.Hooks, kind, err, turn)
+			publishSessionEndTrace(options.Events, "error: "+err.Error())
+			emitSessionError(options.Events, kind, err, turn)
 			return loopResult{}, err
 		}
 		contextReport := context.Report()
-		_ = tr.Write("model_call_started", map[string]any{
-			"turn":           turn,
-			"tools_count":    len(toolSchemas),
-			"context_report": contextReport,
-		})
-		emitHook(options.Hooks, "before_model_call", kind, map[string]any{
-			"turn":           turn,
-			"tools_count":    len(toolSchemas),
-			"context_report": contextReport,
+		publishEvent(options.Events, events.Event{
+			Name: "before_model_call",
+			Kind: kind,
+			HookData: map[string]any{
+				"turn":           turn,
+				"tools_count":    len(toolSchemas),
+				"context_report": contextReport,
+			},
+			TraceName: "model_call_started",
+			TraceData: map[string]any{
+				"turn":           turn,
+				"tools_count":    len(toolSchemas),
+				"context_report": contextReport,
+			},
 		})
 		raw, err := callModelWithRateLimitRetry(client, tr, messages, toolSchemas, map[string]any{"turn": turn})
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
-			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			emitSessionError(options.Hooks, kind, err, turn)
+			publishSessionEndTrace(options.Events, "error: "+err.Error())
+			emitSessionError(options.Events, kind, err, turn)
 			return loopResult{}, err
 		}
 		message, err := responseMessage(raw)
 		if err != nil {
 			_ = tr.Write("model_error", map[string]any{"turn": turn, "error": err.Error()})
-			_ = tr.Write("session_end", map[string]any{"result": "error: " + err.Error()})
-			emitSessionError(options.Hooks, kind, err, turn)
+			publishSessionEndTrace(options.Events, "error: "+err.Error())
+			emitSessionError(options.Events, kind, err, turn)
 			return loopResult{}, err
 		}
-		_ = tr.Write("model_call_finished", map[string]any{"turn": turn, "message": message})
-		emitHook(options.Hooks, "after_model_call", kind, map[string]any{
-			"turn":    turn,
-			"message": modelMessageSummary(message),
+		publishEvent(options.Events, events.Event{
+			Name: "after_model_call",
+			Kind: kind,
+			HookData: map[string]any{
+				"turn":    turn,
+				"message": modelMessageSummary(message),
+			},
+			TraceName: "model_call_finished",
+			TraceData: map[string]any{"turn": turn, "message": message},
 		})
 		context.RecordAssistant(message)
 		calls := toolCalls(message)
 		if len(calls) == 0 {
 			result := messageContent(message)
-			_ = tr.Write("session_end", map[string]any{"result": result})
-			emitHook(options.Hooks, "session_end", kind, map[string]any{
+			publishSessionEnd(options.Events, kind, result, map[string]any{
 				"status":         "done",
 				"turns":          turn + 1,
 				"result_preview": truncateForHook(result, 1000),
 			})
 			return loopResult{Status: "done", Result: result, Turns: turn + 1}, nil
 		}
-		tasks := prepareToolTasks(registry, calls, options.Hooks, kind, turn)
+		tasks := prepareToolTasks(registry, calls, options.Events, kind, turn)
 		groups := turnexec.Plan(tasks)
 		writeToolExecutionPlan(tr, turn, options.MaxParallelToolCalls, groups)
 		results := turnexec.Execute(groups, options.MaxParallelToolCalls, func(task turnexec.Task) (tools.Observation, []map[string]any) {
@@ -103,8 +112,7 @@ func runModelLoop(
 		}
 	}
 	result := "Agent stopped: max_turns exceeded."
-	_ = tr.Write("session_end", map[string]any{"result": result})
-	emitHook(options.Hooks, "session_end", kind, map[string]any{
+	publishSessionEnd(options.Events, kind, result, map[string]any{
 		"status":         "max_turns",
 		"turns":          maxTurns,
 		"result_preview": result,

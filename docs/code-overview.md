@@ -11,7 +11,8 @@
 | `internal/skills` | Ищет skills, строит catalog, активирует `SKILL.md` и описывает resources. |
 | `internal/mcp` | Реализует stdio MCP client, JSON-RPC, config loader, provider и result adapter. |
 | `internal/subagents` | Загружает роли, вычисляет режим оркестрации, описывает tools субагентов и сводит дочерние traces. |
-| `internal/hooks` | Читает hooks config, запускает command handlers, делает redaction и пишет hook events в trace. |
+| `internal/events` | Публикует lifecycle-события подписчикам и сохраняет trace-события через trace subscriber. |
+| `internal/hooks` | Читает hooks config, запускает enforce/observe command handlers, делает redaction и пишет hook events в trace. |
 | `internal/agent` | Собирает запуск: trace, hooks, model client, skills, subagents, MCP, context и registry. |
 | `internal/agent/turnexec` | Планирует read-only tool batches и выполняет их конкурентно внутри одного turn-а. |
 | `internal/model` | Вызывает OpenAI-совместимый `/chat/completions`. |
@@ -24,17 +25,20 @@
 ## Поток `run`
 
 1. `internal/cli` создаёт `config.Config`.
-2. `agent.RunWithOptions()` создаёт parent `Trace` и `hooks.Manager`.
-3. Hooks получают `session_start`.
+2. `agent.RunWithOptions()` создаёт parent `Trace`, `hooks.Manager` и
+   `events.Bus`.
+3. Event bus публикует `session_start`; trace уже содержит начальный
+   `session_start` от `trace.New()`, hooks получают project payload.
 4. Загружаются skills, subagents и MCP providers.
 5. `agentcontext.BaseContext()` добавляет встроенный prompt, корневой
    `AGENTS.md`, catalog skills и историю.
-6. Перед model call вызывается `before_model_call`, после ответа -
-   `after_model_call`.
-7. Если модель вызывает tools, `runModelLoop()` синхронно вызывает
+6. Перед model call публикуется `before_model_call`, после ответа -
+   `after_model_call`; trace и hooks получают одно lifecycle-событие через
+   разных подписчиков.
+7. Если модель вызывает tools, `runModelLoop()` синхронно публикует
    `before_tool_call` для каждого call.
-8. Если hook блокирует действие, handler не запускается, а модель получает
-   fail-observation.
+8. Если enforce hook блокирует действие, handler не запускается, а модель
+   получает fail-observation. Observe hooks не блокируют.
 9. Если блокировки нет, `turnexec` параллелит только соседние read-only tools,
    а write/shell/state/delegate/MCP calls оставляет барьерами.
 10. После observation вызывается `after_tool_call`, а commit в context идёт в
