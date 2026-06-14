@@ -14,21 +14,64 @@ import (
 // Summarize строит короткую CLI-сводку по trace id или его префиксу.
 func Summarize(cfg *config.Config, traceID string) (string, error) {
 	normalized := strings.TrimSuffix(traceID, ".jsonl")
-	exact := filepath.Join(cfg.StateDir, "traces", normalized+".jsonl")
-	if _, err := os.Stat(exact); err == nil {
-		return summarizePath(exact)
-	} else if err != nil && !os.IsNotExist(err) {
+	tracesDir := filepath.Join(cfg.StateDir, "traces")
+	exactNew := filepath.Join(tracesDir, normalized, normalized+".jsonl")
+	if ok, err := fileExists(exactNew); err != nil {
 		return "", err
+	} else if ok {
+		return summarizePath(exactNew)
 	}
-	pattern := filepath.Join(cfg.StateDir, "traces", traceID+"*.jsonl")
-	matches, err := filepath.Glob(pattern)
+	exactLegacy := filepath.Join(tracesDir, normalized+".jsonl")
+	if ok, err := fileExists(exactLegacy); err != nil {
+		return "", err
+	} else if ok {
+		return summarizePath(exactLegacy)
+	}
+
+	newMatches, err := filepath.Glob(filepath.Join(tracesDir, normalized+"*"))
 	if err != nil {
 		return "", err
 	}
-	if len(matches) == 0 {
-		return "", fmt.Errorf("trace not found: %s", traceID)
+	sort.Strings(newMatches)
+	for _, match := range newMatches {
+		info, err := os.Stat(match)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(match, filepath.Base(match)+".jsonl")
+		if ok, err := fileExists(candidate); err != nil {
+			return "", err
+		} else if ok {
+			return summarizePath(candidate)
+		}
 	}
-	return summarizePath(matches[0])
+
+	legacyMatches, err := filepath.Glob(filepath.Join(tracesDir, normalized+"*.jsonl"))
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(legacyMatches)
+	if len(legacyMatches) > 0 {
+		return summarizePath(legacyMatches[0])
+	}
+	return "", fmt.Errorf("trace not found: %s", traceID)
+}
+
+func fileExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		return !info.IsDir(), nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func summarizePath(path string) (string, error) {

@@ -36,9 +36,13 @@ func New(cfg *config.Config, kind string) (*Trace, error) {
 		return nil, err
 	}
 	id := time.Now().Format("20060102-150405") + "-" + randomSuffix()
+	dir := filepath.Join(cfg.StateDir, "traces", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
 	tr := &Trace{
 		ID:   id,
-		Path: filepath.Join(cfg.StateDir, "traces", id+".jsonl"),
+		Path: filepath.Join(dir, id+".jsonl"),
 	}
 	if err := tr.Write("session_start", map[string]any{"kind": kind}); err != nil {
 		return nil, err

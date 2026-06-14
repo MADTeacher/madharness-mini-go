@@ -3,6 +3,7 @@ package trace
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -15,6 +16,10 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	tr, err := New(cfg, "run")
 	if err != nil {
 		t.Fatal(err)
+	}
+	wantPath := filepath.Join(cfg.StateDir, "traces", tr.ID, tr.ID+".jsonl")
+	if tr.Path != wantPath {
+		t.Fatalf("trace path = %s, want %s", tr.Path, wantPath)
 	}
 	if err := tr.Write("tool_observation", map[string]any{"tool": "list_files"}); err != nil {
 		t.Fatal(err)
@@ -65,6 +70,13 @@ func TestTraceWriteAndSummary(t *testing.T) {
 	if !strings.Contains(summary, "skills: discovered 2; activated docs-writer; resources used 1") {
 		t.Fatalf("summary = %s", summary)
 	}
+	exactSummary, err := Summarize(cfg, tr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(exactSummary, "result: ok") {
+		t.Fatalf("summary = %s", exactSummary)
+	}
 }
 
 func TestSummaryTruncatesUTF8Safely(t *testing.T) {
@@ -83,6 +95,9 @@ func TestSummarizePrefersExactParentTraceAndShowsSubagents(t *testing.T) {
 	child, err := parent.Child("subagent", "subagent-reviewer")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Dir(child.Path) != filepath.Dir(parent.Path) {
+		t.Fatalf("child path = %s, parent path = %s", child.Path, parent.Path)
 	}
 	if err := child.Write("session_end", map[string]any{"result": "child result"}); err != nil {
 		t.Fatal(err)
@@ -105,6 +120,31 @@ func TestSummarizePrefersExactParentTraceAndShowsSubagents(t *testing.T) {
 		t.Fatalf("summary = %s", summary)
 	}
 	if !strings.Contains(summary, "subagents: events 2; names reviewer") {
+		t.Fatalf("summary = %s", summary)
+	}
+}
+
+func TestSummarizeReadsLegacyFlatTrace(t *testing.T) {
+	cfg := testTraceConfig(t)
+	if err := cfg.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	id := "legacy-trace"
+	path := filepath.Join(cfg.StateDir, "traces", id+".jsonl")
+	raw := strings.Join([]string{
+		`{"event":"session_start","kind":"run","seq":1}`,
+		`{"event":"session_end","result":"legacy result","seq":2}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := Summarize(cfg, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(summary, "result: legacy result") {
 		t.Fatalf("summary = %s", summary)
 	}
 }

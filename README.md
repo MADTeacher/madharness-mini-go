@@ -69,6 +69,10 @@ go run ./cmd/madharness-mini run --yolo "Проверь проект макси�
 go run ./cmd/madharness-mini trace <trace-id>
 ```
 
+Новые запуски пишутся в `.madharness-mini/traces/<trace-id>/<trace-id>.jsonl`;
+старые плоские файлы `.madharness-mini/traces/<trace-id>.jsonl` команда
+`trace` тоже читает.
+
 ## Финальная документация
 
 - [Возможности полной версии](docs/capabilities.md)

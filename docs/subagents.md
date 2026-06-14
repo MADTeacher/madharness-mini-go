@@ -169,8 +169,11 @@ user_input_requested
 Полный ход субагента пишется в отдельный файл:
 
 ```text
-.madharness-mini/traces/<parent-id>--subagent-<name>-<suffix>.jsonl
+.madharness-mini/traces/<parent-id>/<parent-id>--subagent-<name>-<suffix>.jsonl
 ```
+
+Родительская трасса лежит рядом:
+`.madharness-mini/traces/<parent-id>/<parent-id>.jsonl`.
 
 Команда `trace` показывает наличие subagent-событий:
 

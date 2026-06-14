@@ -174,11 +174,14 @@ go run ./cmd/madharness-mini skills validate
 
 ## Trace
 
-Каждый `run` пишет JSONL-трассу в:
+Каждый `run` пишет JSONL-трассу в отдельную директорию запуска:
 
 ```text
-.madharness-mini/traces/*.jsonl
+.madharness-mini/traces/<trace-id>/<trace-id>.jsonl
 ```
+
+Команда `trace` также читает старые плоские файлы
+`.madharness-mini/traces/<trace-id>.jsonl`.
 
 Для skills есть отдельные события:
 
