@@ -7,6 +7,7 @@ type concurrencySummary struct {
 	MaxParallelTools        int
 	MaxParallelSubagents    int
 	ParallelReadBatches     int
+	ParallelMCPBatches      int
 	ParallelDelegateBatches int
 	BarrierGroups           int
 }
@@ -29,6 +30,8 @@ func collectConcurrencySummary(events []map[string]any) concurrencySummary {
 				switch group["kind"] {
 				case "delegate":
 					summary.ParallelDelegateBatches++
+				case "mcp":
+					summary.ParallelMCPBatches++
 				default:
 					summary.ParallelReadBatches++
 				}
@@ -42,10 +45,11 @@ func collectConcurrencySummary(events []map[string]any) concurrencySummary {
 
 func (s concurrencySummary) String() string {
 	return fmt.Sprintf(
-		"concurrency: max tool calls %d; max subagents %d; parallel read batches %d; parallel delegate batches %d; barrier groups %d",
+		"concurrency: max tool calls %d; max subagents %d; parallel read batches %d; parallel MCP batches %d; parallel delegate batches %d; barrier groups %d",
 		s.MaxParallelTools,
 		s.MaxParallelSubagents,
 		s.ParallelReadBatches,
+		s.ParallelMCPBatches,
 		s.ParallelDelegateBatches,
 		s.BarrierGroups,
 	)

@@ -43,6 +43,8 @@ func runWithClient(task string, cfg *config.Config, client chatClient) (string, 
 }
 
 func runWithClientOptions(task string, cfg *config.Config, client chatClient, options RunOptions) (string, string, error) {
+	restoreRunOverrides := applyRunOptionOverrides(cfg, options)
+	defer restoreRunOverrides()
 	tr, err := trace.New(cfg, "run")
 	if err != nil {
 		return "", "", err
@@ -161,6 +163,16 @@ func runWithClientOptions(task string, cfg *config.Config, client chatClient, op
 		MaxParallelSubagents: resolvedMaxParallelSubagents(cfg, options),
 	})
 	return result.Result, tr.Path, err
+}
+
+func applyRunOptionOverrides(cfg *config.Config, options RunOptions) func() {
+	oldMaxParallelToolCalls := cfg.Data.MaxParallelToolCalls
+	if options.MaxParallelToolCalls > 0 {
+		cfg.Data.MaxParallelToolCalls = options.MaxParallelToolCalls
+	}
+	return func() {
+		cfg.Data.MaxParallelToolCalls = oldMaxParallelToolCalls
+	}
 }
 
 func diagnosticsForTrace(diagnostics []skills.Diagnostic, root string) []map[string]string {

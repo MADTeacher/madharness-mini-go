@@ -85,6 +85,14 @@ go run ./cmd/madharness-mini run "Через MCP узнай текущее вр�
 При ошибке регистрации уже запущенные provider-ы закрываются через
 `tools.Registry.Close()`.
 
+`initialize`, `notifications/initialized` и `tools/list` выполняются
+последовательно во время старта. После регистрации tools соседние MCP-вызовы в
+одном assistant-turn-е могут выполняться параллельно, если
+`max_parallel_tool_calls` больше `1`. Stdio-клиент использует JSON-RPC
+multiplexer: каждый request получает защищённый id, stdout-диспетчер доставляет
+response в канал ожидающего запроса, а timeout или закрытие transport-а
+освобождает pending-запросы без смешивания observations.
+
 ## Имена инструментов
 
 MCP tool получает имя:
@@ -148,6 +156,8 @@ MCP пишет отдельные события в JSONL-трассу:
 
 Полный stdout/stderr MCP-сервера в трассу не пишется. Для ошибок stderr
 добавляется только коротким фрагментом в текст исключения.
+План выполнения tools пишет MCP batches в `tool_execution_plan` с kind `mcp`;
+команда `trace` показывает их отдельным счётчиком parallel MCP batches.
 
 `tools.Registry.Close()` вызывается в `agent.Run()` через `defer`. MCP provider
 сначала закрывает stdin сервера, ждёт штатного завершения, затем пробует мягкий

@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/mcp"
 )
+
+var agentFakeMCPSendMu sync.Mutex
 
 func TestRunClosesMCPProcessAfterFinalAnswer(t *testing.T) {
 	cfg := testAgentConfig(t)
@@ -48,6 +52,35 @@ func TestAskDoesNotStartMCP(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("MCP marker should not exist after ask, err=%v", err)
+	}
+}
+
+func TestRunOverlapsMCPToolsWhenParallelEnabled(t *testing.T) {
+	cfg := testAgentConfig(t)
+	writeAgentMCPConfig(t, cfg)
+	client := &sequenceClient{responses: []map[string]any{
+		mcpToolCallsResponse(),
+		contentResponse("done"),
+	}}
+
+	started := time.Now()
+	result, tracePath, err := runWithClientOptions("call MCP twice", cfg, client, RunOptions{MaxParallelToolCalls: 2})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q", result)
+	}
+	if elapsed > 550*time.Millisecond {
+		t.Fatalf("MCP calls did not overlap enough, elapsed=%s", elapsed)
+	}
+	contents := mcpObservationContents(t, readTraceEvents(t, tracePath))
+	if len(contents) != 2 || contents[0] != "echo:first" || contents[1] != "echo:second" {
+		t.Fatalf("MCP observation order = %v", contents)
+	}
+	if !traceHasParallelMCPBatch(readTraceEvents(t, tracePath)) {
+		t.Fatal("trace has no parallel MCP batch")
 	}
 }
 
@@ -131,8 +164,22 @@ func handleAgentFakeMCPMessage(message map[string]any) {
 		sendAgentFakeMCP(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      requestID,
-			"result":  map[string]any{"tools": []any{}},
+			"result": map[string]any{
+				"tools": []any{map[string]any{
+					"name":        "echo",
+					"description": "Echo input.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"text":     map[string]any{"type": "string"},
+							"delay_ms": map[string]any{"type": "number"},
+						},
+					},
+				}},
+			},
 		})
+	case "tools/call":
+		go handleAgentFakeMCPToolCall(message, requestID)
 	default:
 		sendAgentFakeMCP(map[string]any{
 			"jsonrpc": "2.0",
@@ -142,7 +189,87 @@ func handleAgentFakeMCPMessage(message map[string]any) {
 	}
 }
 
+func handleAgentFakeMCPToolCall(message map[string]any, requestID any) {
+	params, _ := message["params"].(map[string]any)
+	args, _ := params["arguments"].(map[string]any)
+	if delayMS := agentMCPIntArg(args, "delay_ms"); delayMS > 0 {
+		time.Sleep(time.Duration(delayMS) * time.Millisecond)
+	}
+	text, _ := args["text"].(string)
+	sendAgentFakeMCP(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      requestID,
+		"result": map[string]any{
+			"content": []any{map[string]any{
+				"type": "text",
+				"text": "echo:" + text,
+			}},
+		},
+	})
+}
+
 func sendAgentFakeMCP(message map[string]any) {
 	raw, _ := json.Marshal(message)
+	agentFakeMCPSendMu.Lock()
+	defer agentFakeMCPSendMu.Unlock()
 	os.Stdout.Write(append(raw, '\n'))
+}
+
+func mcpToolCallsResponse() map[string]any {
+	firstArgs, _ := json.Marshal(map[string]any{"text": "first", "delay_ms": 300})
+	secondArgs, _ := json.Marshal(map[string]any{"text": "second", "delay_ms": 300})
+	return map[string]any{"choices": []any{map[string]any{"message": map[string]any{
+		"content": nil,
+		"tool_calls": []any{
+			map[string]any{
+				"id":       "call_first",
+				"function": map[string]any{"name": "mcp__agentfake__echo", "arguments": string(firstArgs)},
+			},
+			map[string]any{
+				"id":       "call_second",
+				"function": map[string]any{"name": "mcp__agentfake__echo", "arguments": string(secondArgs)},
+			},
+		},
+	}}}}
+}
+
+func mcpObservationContents(t *testing.T, events []map[string]any) []string {
+	t.Helper()
+	out := []string{}
+	for _, event := range events {
+		if event["event"] != "tool_observation" || event["tool"] != "mcp__agentfake__echo" {
+			continue
+		}
+		observation, _ := event["observation"].(map[string]any)
+		content, _ := observation["content"].(string)
+		out = append(out, content)
+	}
+	return out
+}
+
+func traceHasParallelMCPBatch(events []map[string]any) bool {
+	for _, event := range events {
+		if event["event"] != "tool_execution_plan" {
+			continue
+		}
+		groups, _ := event["groups"].([]any)
+		for _, raw := range groups {
+			group, _ := raw.(map[string]any)
+			if group["kind"] == "mcp" && group["parallel"] == true {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func agentMCPIntArg(args map[string]any, name string) int {
+	switch value := args[name].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
 }

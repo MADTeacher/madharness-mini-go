@@ -26,7 +26,7 @@ func registerRunFlags(fs *flag.FlagSet) runFlagValues {
 		noOrchestrate:        fs.Bool("no-orchestrate", false, "do not show delegate_task to the parent agent"),
 		orchestrate:          fs.Bool("orchestrate", false, "make delegate_task available to the parent agent"),
 		orchestrateRequired:  fs.Bool("orchestrate-required", false, "strict mode: parent coordinates work through subagents"),
-		maxParallelTools:     fs.Int("max-parallel-tool-calls", 0, "per-run max parallel read-only tool calls; default uses config"),
+		maxParallelTools:     fs.Int("max-parallel-tool-calls", 0, "per-run max parallel read-only/MCP tool calls; default uses config"),
 		maxParallelSubagents: fs.Int("max-parallel-subagents", 0, "per-run max parallel delegate_task calls; default uses config"),
 		approvalMode:         fs.String("approval", "", "approval mode for escalatable policy denials: ask or deny"),
 		yoloMode:             fs.Bool("yolo", false, "auto-approve escalatable policy denials inside the workspace"),

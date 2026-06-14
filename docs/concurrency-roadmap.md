@@ -26,12 +26,17 @@ subagent model loops.
 go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 ```
 
-Параллельно могут выполняться только соседние read-only tools:
+Параллельно могут выполняться соседние read-only tools:
 
 - `list_files`;
 - `read_file`;
 - `read_image`;
 - `search_code`.
+
+Соседние MCP tools образуют отдельный parallel batch и используют тот же
+`max_parallel_tool_calls`. Внутри одного stdio-сервера ответы маршрутизируются
+через JSON-RPC multiplexer, поэтому поздний response одного запроса не может
+попасть в другой tool call.
 
 Остальные tools остаются барьерами и выполняются по одному:
 
@@ -42,7 +47,6 @@ go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 - `shell_status`;
 - `stop_shell`;
 - `activate_skill`;
-- MCP tools;
 - неизвестные tools без явного effect.
 
 Соседние `delegate_task` образуют отдельный parallel batch. Если один
@@ -53,12 +57,13 @@ go run ./cmd/madharness-mini run --max-parallel-subagents 2 --orchestrate "..."
 `before_tool_call` вызывается синхронно и в порядке ответа модели до запуска
 handler-ов. После выполнения handlers harness применяет observations, hidden
 effects, trace events и `RecordToolResult()` строго в исходном порядке
-`tool_calls`, даже если read-only handlers завершились в другом порядке.
+`tool_calls`, даже если read-only или MCP handlers завершились в другом
+порядке.
 
 Перед выполнением tools harness пишет `tool_execution_plan` в trace: лимиты,
 группы выполнения, тип группы, имена tools и классы effects. Команда `trace`
 показывает краткую строку `concurrency` с max tool calls, max subagents,
-количеством read/delegate batches и barrier-групп.
+количеством read/MCP/delegate batches и barrier-групп.
 
 ### Agent sessions
 
@@ -132,12 +137,6 @@ Hooks разделены на `enforce` и `observe`. Старый `hooks.json` 
 пределами workspace и невалидные команды не эскалируются.
 
 ## Future work
-
-### MCP multiplexer
-
-MCP tools сейчас сериализуются на уровне одного stdio server. Полноценная
-конкурентность требует JSON-RPC multiplexer: защищённые request id, pending map
-`id -> response channel`, dispatcher stdout и закрытие transport-а без гонок.
 
 ### Session finalizer
 

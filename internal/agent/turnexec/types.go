@@ -29,6 +29,10 @@ func (t Task) readOnly() bool {
 	return t.Runnable && tools.NormalizeEffect(t.Effect) == tools.EffectRead
 }
 
+func (t Task) mcp() bool {
+	return t.Runnable && tools.NormalizeEffect(t.Effect) == tools.EffectMCP
+}
+
 func (t Task) delegate() bool {
 	return t.Runnable && tools.NormalizeEffect(t.Effect) == tools.EffectDelegate
 }

@@ -42,9 +42,9 @@
    `before_tool_call` для каждого call.
 8. Если enforce hook блокирует `before_tool_call`, handler не запускается, а
    модель получает fail-observation. Observe hooks не блокируют.
-9. Если блокировки нет, `turnexec` параллелит соседние read-only tools и
-   соседние `delegate_task` в разных batches, а write/shell/state/MCP calls
-   оставляет барьерами.
+9. Если блокировки нет, `turnexec` параллелит соседние read-only tools,
+   соседние MCP tools и соседние `delegate_task` в разных batches, а
+   write/shell/state calls оставляет барьерами.
 10. Если tool упёрся в эскалируемый policy-отказ, `internal/approval`
     публикует `approval_request` и `approval_decision`; `approval_request`
     может быть заблокирован enforce hook-ом до CLI prompt.

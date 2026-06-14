@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +131,35 @@ func TestCallModelDoesNotRetryLongRateLimit(t *testing.T) {
 	}
 	if client.calls != 1 {
 		t.Fatalf("calls = %d", client.calls)
+	}
+}
+
+func TestRunOptionMaxParallelToolCallsReachesModelPayload(t *testing.T) {
+	cfg := testAgentConfig(t)
+	cfg.Data.APIKey = "token"
+	cfg.Data.MaxParallelToolCalls = 1
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"done"}}]}`))
+	}))
+	defer server.Close()
+	cfg.Data.BaseURL = server.URL
+
+	result, _, err := runWithClientOptions("finish", cfg, model.New(cfg), RunOptions{MaxParallelToolCalls: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "done" {
+		t.Fatalf("result = %q", result)
+	}
+	if payload["parallel_tool_calls"] != true {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if cfg.Data.MaxParallelToolCalls != 1 {
+		t.Fatalf("config was not restored: %d", cfg.Data.MaxParallelToolCalls)
 	}
 }
 

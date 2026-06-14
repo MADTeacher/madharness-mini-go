@@ -3,17 +3,18 @@ package turnexec
 const (
 	GroupBarrier  = "barrier"
 	GroupRead     = "read"
+	GroupMCP      = "mcp"
 	GroupDelegate = "delegate"
 )
 
-// Group хранит непрерывный участок turn-а: read/delegate batch или один barrier.
+// Group хранит непрерывный участок turn-а: read/MCP/delegate batch или один barrier.
 type Group struct {
 	Tasks    []Task
 	Parallel bool
 	Kind     string
 }
 
-// Plan группирует соседние read-only/delegate calls и оставляет остальные calls барьерами.
+// Plan группирует соседние read-only/MCP/delegate calls и оставляет остальные calls барьерами.
 func Plan(tasks []Task) []Group {
 	groups := []Group{}
 	var batch []Task
@@ -36,6 +37,10 @@ func Plan(tasks []Task) []Group {
 	for _, task := range tasks {
 		if task.readOnly() {
 			addBatch(GroupRead, task)
+			continue
+		}
+		if task.mcp() {
+			addBatch(GroupMCP, task)
 			continue
 		}
 		if task.delegate() {

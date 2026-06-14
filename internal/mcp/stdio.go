@@ -24,14 +24,16 @@ type StdioClient struct {
 	stdout io.ReadCloser
 	stderr io.ReadCloser
 
-	messages chan incomingMessage
 	waitDone chan struct{}
 	waitErr  error
 
 	stderrMu  sync.Mutex
 	stderrLog []string
 	readers   sync.WaitGroup
-	requestMu sync.Mutex
+	rpcMu     sync.Mutex
+	pendingMu sync.Mutex
+	pending   map[int64]chan incomingMessage
+	transport error
 	writeMu   sync.Mutex
 	closeMu   sync.Mutex
 	closeCode *int
@@ -43,7 +45,7 @@ func NewStdioClient(config ServerConfig) *StdioClient {
 	return &StdioClient{
 		config:   config,
 		rpc:      NewJSONRPCBuilder(),
-		messages: make(chan incomingMessage, 64),
+		pending:  map[int64]chan incomingMessage{},
 		waitDone: make(chan struct{}),
 	}
 }
@@ -106,40 +108,27 @@ func (c *StdioClient) Start() ([]map[string]any, error) {
 
 // Request отправляет JSON-RPC request и ждёт response с тем же id.
 func (c *StdioClient) Request(method string, params map[string]any) (map[string]any, error) {
-	c.requestMu.Lock()
-	defer c.requestMu.Unlock()
-	message := c.rpc.Request(method, params)
+	message := c.nextRequest(method, params)
 	expectedID, _ := message["id"].(int64)
+	response, err := c.addPending(expectedID)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.send(message); err != nil {
+		c.removePending(expectedID)
 		return nil, err
 	}
 	timer := time.NewTimer(c.config.Timeout)
 	defer timer.Stop()
-	for {
-		select {
-		case incoming := <-c.messages:
-			if incoming.err != nil {
-				return nil, incoming.err
-			}
-			if isServerRequest(incoming.message) {
-				methodName, _ := incoming.message["method"].(string)
-				if err := c.send(methodNotFoundResponse(incoming.message["id"], methodName)); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if _, ok := incoming.message["id"]; !ok {
-				continue
-			}
-			if !sameID(incoming.message["id"], expectedID) {
-				return nil, fmt.Errorf("unexpected MCP response id: %v; expected %d", incoming.message["id"], expectedID)
-			}
-			return ParseResponse(incoming.message, expectedID)
-		case <-c.waitDone:
-			return nil, fmt.Errorf("MCP server %s exited before response to %s; exit_code: %s; stderr: %s", c.config.Name, method, c.exitCodeText(), c.StderrExcerpt(2000))
-		case <-timer.C:
-			return nil, fmt.Errorf("MCP request timed out: %s; stderr: %s", method, c.StderrExcerpt(2000))
+	select {
+	case incoming := <-response:
+		if incoming.err != nil {
+			return nil, incoming.err
 		}
+		return ParseResponse(incoming.message, expectedID)
+	case <-timer.C:
+		c.removePending(expectedID)
+		return nil, fmt.Errorf("MCP request timed out: %s; stderr: %s", method, c.StderrExcerpt(2000))
 	}
 }
 
@@ -166,6 +155,7 @@ func (c *StdioClient) Close() *int {
 	}
 	c.closed = true
 	c.closeMu.Unlock()
+	c.failPending(fmt.Errorf("MCP transport closed for server %s", c.config.Name))
 
 	if c.cmd == nil || c.cmd.Process == nil {
 		return nil
@@ -181,9 +171,64 @@ func (c *StdioClient) Close() *int {
 	return code
 }
 
+func (c *StdioClient) nextRequest(method string, params map[string]any) map[string]any {
+	c.rpcMu.Lock()
+	defer c.rpcMu.Unlock()
+	return c.rpc.Request(method, params)
+}
+
+func (c *StdioClient) addPending(id int64) (<-chan incomingMessage, error) {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	if c.transport != nil {
+		return nil, c.transport
+	}
+	response := make(chan incomingMessage, 1)
+	c.pending[id] = response
+	return response, nil
+}
+
+func (c *StdioClient) removePending(id int64) {
+	c.pendingMu.Lock()
+	delete(c.pending, id)
+	c.pendingMu.Unlock()
+}
+
+func (c *StdioClient) completePending(id int64, incoming incomingMessage) {
+	c.pendingMu.Lock()
+	response := c.pending[id]
+	delete(c.pending, id)
+	c.pendingMu.Unlock()
+	if response != nil {
+		response <- incoming
+	}
+}
+
+func (c *StdioClient) failPending(err error) {
+	c.pendingMu.Lock()
+	if c.transport == nil {
+		c.transport = err
+	}
+	responses := make([]chan incomingMessage, 0, len(c.pending))
+	for id, response := range c.pending {
+		responses = append(responses, response)
+		delete(c.pending, id)
+	}
+	c.pendingMu.Unlock()
+	for _, response := range responses {
+		response <- incomingMessage{err: err}
+	}
+}
+
 func (c *StdioClient) send(message map[string]any) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	c.closeMu.Lock()
+	closed := c.closed
+	c.closeMu.Unlock()
+	if closed {
+		return fmt.Errorf("MCP server %s is closed", c.config.Name)
+	}
 	if c.stdin == nil {
 		return fmt.Errorf("MCP server %s is not running", c.config.Name)
 	}

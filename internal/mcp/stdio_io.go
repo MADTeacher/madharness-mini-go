@@ -24,14 +24,33 @@ func (c *StdioClient) readStdout() {
 		}
 		message := map[string]any{}
 		if err := json.Unmarshal([]byte(line), &message); err != nil {
-			c.messages <- incomingMessage{err: fmt.Errorf("invalid MCP JSON from stdout: %w: %s", err, clipText(line, 200))}
-			continue
+			c.failPending(fmt.Errorf("invalid MCP JSON from stdout: %w: %s", err, clipText(line, 200)))
+			return
 		}
-		c.messages <- incomingMessage{message: message}
+		c.dispatchStdoutMessage(message)
 	}
 	if err := scanner.Err(); err != nil {
-		c.messages <- incomingMessage{err: fmt.Errorf("MCP stdout read error: %w", err)}
+		c.failPending(fmt.Errorf("MCP stdout read error: %w", err))
 	}
+}
+
+func (c *StdioClient) dispatchStdoutMessage(message map[string]any) {
+	if isServerRequest(message) {
+		methodName, _ := message["method"].(string)
+		if err := c.send(methodNotFoundResponse(message["id"], methodName)); err != nil {
+			c.failPending(err)
+		}
+		return
+	}
+	rawID, ok := message["id"]
+	if !ok {
+		return
+	}
+	id, ok := idFromAny(rawID)
+	if !ok {
+		return
+	}
+	c.completePending(id, incomingMessage{message: message})
 }
 
 func (c *StdioClient) readStderr() {

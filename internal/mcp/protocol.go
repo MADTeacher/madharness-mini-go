@@ -88,17 +88,25 @@ func jsonRPCError(raw any) error {
 }
 
 func sameID(raw any, expected int64) bool {
+	parsed, ok := idFromAny(raw)
+	return ok && parsed == expected
+}
+
+func idFromAny(raw any) (int64, bool) {
 	switch value := raw.(type) {
 	case int:
-		return int64(value) == expected
+		return int64(value), true
 	case int64:
-		return value == expected
+		return value, true
 	case float64:
-		return value == float64(expected)
+		if value != float64(int64(value)) {
+			return 0, false
+		}
+		return int64(value), true
 	case json.Number:
 		parsed, err := value.Int64()
-		return err == nil && parsed == expected
+		return parsed, err == nil
 	default:
-		return false
+		return 0, false
 	}
 }

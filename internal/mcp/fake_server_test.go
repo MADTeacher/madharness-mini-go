@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 )
+
+var fakeSendMu sync.Mutex
 
 func TestHelperProcessMCP(t *testing.T) {
 	if os.Getenv("GO_WANT_MCP_HELPER_PROCESS") != "1" {
@@ -146,7 +150,7 @@ func handleFakeMCPMessage(message map[string]any) {
 			},
 		})
 	case "tools/call":
-		handleFakeToolCall(message, requestID)
+		go handleFakeToolCall(message, requestID)
 	default:
 		sendFakeMCP(map[string]any{
 			"jsonrpc": "2.0",
@@ -159,6 +163,21 @@ func handleFakeMCPMessage(message map[string]any) {
 func handleFakeToolCall(message map[string]any, requestID any) {
 	params, _ := message["params"].(map[string]any)
 	args, _ := params["arguments"].(map[string]any)
+	if boolArg(args, "hang") {
+		select {}
+	}
+	if delayMS := intArg(args, "delay_ms"); delayMS > 0 {
+		time.Sleep(time.Duration(delayMS) * time.Millisecond)
+	}
+	if boolArg(args, "ask_client") {
+		sendFakeMCP(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      9001,
+			"method":  "client/test",
+			"params":  map[string]any{},
+		})
+		time.Sleep(20 * time.Millisecond)
+	}
 	text, _ := args["text"].(string)
 	content := "echo:" + text
 	if args["check_env"] == true {
@@ -180,12 +199,25 @@ func handleFakeToolCall(message map[string]any, requestID any) {
 
 func sendFakeMCP(message map[string]any) {
 	raw, _ := json.Marshal(message)
+	fakeSendMu.Lock()
+	defer fakeSendMu.Unlock()
 	os.Stdout.Write(append(raw, '\n'))
 }
 
 func boolArg(args map[string]any, name string) bool {
 	value, _ := args[name].(bool)
 	return value
+}
+
+func intArg(args map[string]any, name string) int {
+	switch value := args[name].(type) {
+	case int:
+		return value
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
 }
 
 func contains(items []string, want string) bool {

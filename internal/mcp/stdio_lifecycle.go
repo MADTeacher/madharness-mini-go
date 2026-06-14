@@ -10,6 +10,7 @@ import (
 func (c *StdioClient) waitForExit() {
 	c.waitErr = c.cmd.Wait()
 	close(c.waitDone)
+	c.failPending(fmt.Errorf("MCP server %s exited before response; exit_code: %s; stderr: %s", c.config.Name, c.exitCodeText(), c.StderrExcerpt(2000)))
 }
 
 func (c *StdioClient) closeStdin() {

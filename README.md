@@ -52,7 +52,7 @@ go run ./cmd/madharness-mini run \
 Такие процессы живут только внутри текущего `run` и автоматически завершаются
 при выходе harness.
 
-Для параллельного выполнения соседних read-only tools внутри одного turn-а:
+Для параллельного выполнения соседних read-only и MCP tools внутри одного turn-а:
 
 ```bash
 go run ./cmd/madharness-mini run --max-parallel-tool-calls 2 "Найди документацию про конкурентность"
