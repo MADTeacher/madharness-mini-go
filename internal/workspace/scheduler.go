@@ -22,10 +22,11 @@ const (
 
 // Scheduler выдаёт locks для file/shell tools всех agent sessions одного run.
 type Scheduler struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	nextID int64
-	active []lockRequest
+	mu      sync.Mutex
+	cond    *sync.Cond
+	nextID  int64
+	active  []lockRequest
+	waiting []lockRequest
 }
 
 type lockRequest struct {
@@ -41,7 +42,7 @@ func NewScheduler() *Scheduler {
 	return s
 }
 
-// Acquire ждёт, пока request перестанет конфликтовать с активными locks.
+// Acquire ждёт, пока request перестанет конфликтовать с активными и ожидающими locks.
 func (s *Scheduler) Acquire(mode LockMode, paths []string) func() {
 	if s == nil {
 		return func() {}
@@ -50,9 +51,11 @@ func (s *Scheduler) Acquire(mode LockMode, paths []string) func() {
 	s.mu.Lock()
 	s.nextID++
 	request.id = s.nextID
-	for s.conflicts(request) {
+	s.waiting = append(s.waiting, request)
+	for !s.canGrant(request) {
 		s.cond.Wait()
 	}
+	s.removeWaiting(request.id)
 	s.active = append(s.active, request)
 	s.mu.Unlock()
 	return func() {
@@ -72,13 +75,30 @@ func (s *Scheduler) release(id int64) {
 	}
 }
 
-func (s *Scheduler) conflicts(request lockRequest) bool {
+func (s *Scheduler) canGrant(request lockRequest) bool {
 	for _, active := range s.active {
 		if requestsConflict(active, request) {
-			return true
+			return false
 		}
 	}
-	return false
+	for _, waiting := range s.waiting {
+		if waiting.id == request.id {
+			return true
+		}
+		if requestsConflict(waiting, request) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Scheduler) removeWaiting(id int64) {
+	for index, item := range s.waiting {
+		if item.id == id {
+			s.waiting = append(s.waiting[:index], s.waiting[index+1:]...)
+			return
+		}
+	}
 }
 
 func requestsConflict(left lockRequest, right lockRequest) bool {
