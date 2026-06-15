@@ -78,6 +78,14 @@ func methodNotFoundResponse(requestID any, method string) map[string]any {
 	}
 }
 
+func emptyResultResponse(requestID any) map[string]any {
+	return map[string]any{
+		"jsonrpc": "2.0",
+		"id":      requestID,
+		"result":  map[string]any{},
+	}
+}
+
 func jsonRPCError(raw any) error {
 	if item, ok := raw.(map[string]any); ok {
 		code := item["code"]

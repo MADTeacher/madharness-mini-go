@@ -13,7 +13,10 @@ import (
 
 // Summarize строит короткую CLI-сводку по trace id или его префиксу.
 func Summarize(cfg *config.Config, traceID string) (string, error) {
-	normalized := strings.TrimSuffix(traceID, ".jsonl")
+	normalized, err := normalizeTraceLookupID(traceID)
+	if err != nil {
+		return "", err
+	}
 	tracesDir := filepath.Join(cfg.StateDir, "traces")
 	exactNew := filepath.Join(tracesDir, normalized, normalized+".jsonl")
 	if ok, err := fileExists(exactNew); err != nil {
@@ -61,6 +64,23 @@ func Summarize(cfg *config.Config, traceID string) (string, error) {
 		return summarizePath(legacyMatches[0])
 	}
 	return "", fmt.Errorf("trace not found: %s", traceID)
+}
+
+func normalizeTraceLookupID(traceID string) (string, error) {
+	normalized := strings.TrimSuffix(strings.TrimSpace(traceID), ".jsonl")
+	if normalized == "" {
+		return "", fmt.Errorf("invalid trace id: %s", traceID)
+	}
+	if normalized == "." || normalized == ".." || strings.ContainsAny(normalized, "/\\") {
+		return "", fmt.Errorf("invalid trace id: %s", traceID)
+	}
+	for _, ch := range normalized {
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid trace id: %s", traceID)
+	}
+	return normalized, nil
 }
 
 func fileExists(path string) (bool, error) {

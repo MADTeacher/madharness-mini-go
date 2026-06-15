@@ -26,6 +26,16 @@ func TestReadFileRejectsSymlinkOutsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestListFilesMissingPathFails(t *testing.T) {
+	cfg := testFileToolsConfig(t)
+
+	obs := listFiles(testFileToolsContext(cfg), map[string]any{"path": "missing", "glob": "*"})
+
+	if obs["ok"] != false || !strings.Contains(obs["summary"].(string), "cannot list path: missing") {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
 func TestReadFileUsesBoundedPrefix(t *testing.T) {
 	cfg := testFileToolsConfig(t)
 	content := strings.Repeat("a", readFileMaxBytes+1024)

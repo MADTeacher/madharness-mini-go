@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,11 +41,103 @@ func TestStartShellReportsReadyTimeout(t *testing.T) {
 	}
 }
 
+func TestRunShellDeniesProtectedAndOutsideFileArguments(t *testing.T) {
+	cfg := testShellToolConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.Root, ".env"), []byte("SECRET=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &tools.Context{
+		Config: cfg,
+		Policy: policy.New(cfg),
+	}
+
+	protected := runShell(ctx, map[string]any{"command": "cat .env"})
+	if protected["ok"] != false || !strings.Contains(protected["summary"].(string), "protected path") {
+		t.Fatalf("protected obs = %+v", protected)
+	}
+	outside := runShell(ctx, map[string]any{"command": "cat ../outside.txt"})
+	if outside["ok"] != false || !strings.Contains(outside["summary"].(string), "outside workspace") {
+		t.Fatalf("outside obs = %+v", outside)
+	}
+}
+
+func TestRunShellDeniesWrapperBypassCommands(t *testing.T) {
+	cfg := testShellToolConfig(t)
+	ctx := &tools.Context{
+		Config: cfg,
+		Policy: policy.New(cfg),
+	}
+
+	riskyWrapper := runShell(ctx, map[string]any{"command": "env curl https://example.com"})
+	if riskyWrapper["ok"] != false || !strings.Contains(riskyWrapper["summary"].(string), "risky shell command") {
+		t.Fatalf("riskyWrapper obs = %+v", riskyWrapper)
+	}
+	shellWrapper := runShell(ctx, map[string]any{"command": `sh -c "echo ok"`})
+	if shellWrapper["ok"] != false || !strings.Contains(shellWrapper["summary"].(string), "shell interpreter wrappers") {
+		t.Fatalf("shellWrapper obs = %+v", shellWrapper)
+	}
+}
+
+func TestRunShellEnvDoesNotPrintAPIKeys(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("env command fixture is POSIX-specific")
+	}
+	cfg := testShellToolConfig(t)
+	ctx := &tools.Context{
+		Config: cfg,
+		Policy: policy.New(cfg),
+	}
+	t.Setenv("MADHARNESS_MINI_API_KEY", "madharness-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+
+	obs := runShell(ctx, map[string]any{"command": "env"})
+
+	if obs["ok"] != true {
+		t.Fatalf("obs = %+v", obs)
+	}
+	stdout := obs["stdout"].(string)
+	if strings.Contains(stdout, "MADHARNESS_MINI_API_KEY") || strings.Contains(stdout, "OPENAI_API_KEY") {
+		t.Fatalf("api key env leaked in stdout: %q", stdout)
+	}
+	if strings.Contains(stdout, "madharness-secret") || strings.Contains(stdout, "openai-secret") {
+		t.Fatalf("api key value leaked in stdout: %q", stdout)
+	}
+}
+
+func TestStartShellDoesNotInheritAPIKeys(t *testing.T) {
+	cfg := testShellToolConfig(t)
+	manager := processes.NewManager()
+	ctx := &tools.Context{
+		Config:    cfg,
+		Policy:    policy.New(cfg),
+		Processes: manager,
+	}
+	defer manager.CloseAll(nil)
+	t.Setenv("MADHARNESS_MINI_API_KEY", "madharness-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+
+	obs := startShell(ctx, map[string]any{
+		"command":       helperShellToolCommand(t, "print-env-sleep"),
+		"ready_pattern": "env-helper-ready",
+	})
+
+	if obs["ok"] != true {
+		t.Fatalf("obs = %+v", obs)
+	}
+	stdout := obs["stdout"].(string)
+	if strings.Contains(stdout, "MADHARNESS_MINI_API_KEY") || strings.Contains(stdout, "OPENAI_API_KEY") {
+		t.Fatalf("api key env leaked in stdout: %q", stdout)
+	}
+	if strings.Contains(stdout, "madharness-secret") || strings.Contains(stdout, "openai-secret") {
+		t.Fatalf("api key value leaked in stdout: %q", stdout)
+	}
+}
+
 func TestHelperShellTool(t *testing.T) {
-	if os.Getenv("GO_WANT_SHELL_TOOL_HELPER") != "1" {
+	helperArgs := shellToolHelperArgs()
+	if os.Getenv("GO_WANT_SHELL_TOOL_HELPER") != "1" && len(helperArgs) == 0 {
 		return
 	}
-	helperArgs := shellToolHelperArgs()
 	if len(helperArgs) == 0 {
 		t.Fatal("missing helper mode")
 	}
@@ -64,6 +158,10 @@ func TestHelperShellTool(t *testing.T) {
 		os.Stdout.WriteString("child spawned\n")
 	case "child-ignore-interrupt":
 		ignoreShellToolInterrupt()
+		time.Sleep(30 * time.Second)
+	case "print-env-sleep":
+		printLeakedAPIKeys()
+		os.Stdout.WriteString("env-helper-ready\n")
 		time.Sleep(30 * time.Second)
 	}
 	os.Exit(0)
@@ -116,4 +214,13 @@ func shellQuoteForTest(value string) string {
 
 func ignoreShellToolInterrupt() {
 	signal.Ignore(os.Interrupt)
+}
+
+func printLeakedAPIKeys() {
+	if value := os.Getenv("MADHARNESS_MINI_API_KEY"); value != "" {
+		os.Stdout.WriteString("MADHARNESS_MINI_API_KEY=" + value + "\n")
+	}
+	if value := os.Getenv("OPENAI_API_KEY"); value != "" {
+		os.Stdout.WriteString("OPENAI_API_KEY=" + value + "\n")
+	}
 }

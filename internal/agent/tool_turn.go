@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+
 	"github.com/MADTeacher/madharness-mini-go/internal/agent/turnexec"
 	"github.com/MADTeacher/madharness-mini-go/internal/agentcontext"
 	"github.com/MADTeacher/madharness-mini-go/internal/events"
@@ -39,29 +41,34 @@ func prepareToolTask(
 	if !ok {
 		span := startToolCallSpan(tr, parentSpanID, turn, index, "", callID)
 		return turnexec.Task{
-			Index:       index,
-			Call:        map[string]any{"id": "tool_call"},
-			Name:        "tool_call",
-			Args:        map[string]any{},
-			Effect:      tools.EffectExclusive,
-			SpanID:      span.ID(),
-			EndSpan:     span.End,
-			Observation: tools.Fail("tool_call", "invalid tool call: invalid shape"),
+			Index:        index,
+			Call:         map[string]any{"id": "tool_call"},
+			Name:         "tool_call",
+			Args:         map[string]any{},
+			Effect:       tools.EffectExclusive,
+			SpanID:       span.ID(),
+			EndSpan:      span.End,
+			Observation:  tools.Fail("tool_call", "invalid tool call: invalid shape"),
+			RecordResult: false,
 		}
 	}
 	callID = stringFromAny(callMap["id"])
 	name, args, err := tools.ParseToolArgs(callMap)
+	if err == nil && name == "" {
+		err = errors.New("missing function name")
+	}
 	span := startToolCallSpan(tr, parentSpanID, turn, index, name, callID)
 	if err != nil {
 		return turnexec.Task{
-			Index:       index,
-			Call:        callMap,
-			Name:        "tool_call",
-			Args:        map[string]any{},
-			Effect:      tools.EffectExclusive,
-			SpanID:      span.ID(),
-			EndSpan:     span.End,
-			Observation: tools.Fail("tool_call", "invalid tool call: "+err.Error()),
+			Index:        index,
+			Call:         callMap,
+			Name:         "tool_call",
+			Args:         map[string]any{},
+			Effect:       tools.EffectExclusive,
+			SpanID:       span.ID(),
+			EndSpan:      span.End,
+			Observation:  tools.Fail("tool_call", "invalid tool call: "+err.Error()),
+			RecordResult: toolCallHasHistoryPeer(callMap),
 		}
 	}
 	decision := publishEvent(bus, events.Event{
@@ -77,28 +84,39 @@ func prepareToolTask(
 	})
 	if !decision.OK {
 		return turnexec.Task{
-			Index:   index,
-			Call:    callMap,
-			Name:    name,
-			Args:    args,
-			Effect:  tools.EffectExclusive,
-			SpanID:  span.ID(),
-			EndSpan: span.End,
+			Index:        index,
+			Call:         callMap,
+			Name:         name,
+			Args:         args,
+			Effect:       tools.EffectExclusive,
+			SpanID:       span.ID(),
+			EndSpan:      span.End,
+			RecordResult: true,
 			Observation: tools.Fail(name, "blocked by hook: "+decision.Block, map[string]any{
 				"hook_blocked": true,
 			}),
 		}
 	}
 	return turnexec.Task{
-		Index:    index,
-		Call:     callMap,
-		Name:     name,
-		Args:     args,
-		Effect:   registry.Effect(name),
-		Runnable: true,
-		SpanID:   span.ID(),
-		EndSpan:  span.End,
+		Index:        index,
+		Call:         callMap,
+		Name:         name,
+		Args:         args,
+		Effect:       registry.Effect(name),
+		Runnable:     true,
+		RecordResult: true,
+		SpanID:       span.ID(),
+		EndSpan:      span.End,
 	}
+}
+
+func toolCallHasHistoryPeer(call map[string]any) bool {
+	function, ok := call["function"].(map[string]any)
+	if !ok {
+		return false
+	}
+	name, ok := function["name"].(string)
+	return ok && name != ""
 }
 
 func startToolCallSpan(tr *trace.Trace, parentSpanID string, turn int, index int, tool string, callID string) *trace.Span {
@@ -125,7 +143,8 @@ func commitToolResults(
 	turn int,
 ) (loopResult, bool) {
 	var stopped loopResult
-	stop := turnexec.Commit(results, func(result turnexec.Result) bool {
+	stop := false
+	for _, result := range results {
 		obs := result.Observation
 		task := result.Task
 		subagentStop := stringObservationField(obs, "_subagent_stop")
@@ -151,17 +170,18 @@ func commitToolResults(
 			},
 		})
 		endToolSpan(task, obs)
-		if options.StopOnUserInput && subagentStop == "needs_user_input" {
+		if task.RecordResult {
+			context.RecordToolResult(task.Call, obs, result.Followups)
+		}
+		if !stop && options.StopOnUserInput && subagentStop == "needs_user_input" {
 			stopped = stopForSubagentQuestion(options, kind, turn, obs)
-			return true
+			stop = true
 		}
-		context.RecordToolResult(task.Call, obs, result.Followups)
-		if isParentUserInputRequest(obs) {
+		if !stop && isParentUserInputRequest(obs) {
 			stopped = stopForParentQuestion(options, kind, turn, tr, obs)
-			return true
+			stop = true
 		}
-		return false
-	})
+	}
 	return stopped, stop
 }
 

@@ -32,7 +32,16 @@ func Spec() tools.Spec {
 
 func runShell(ctx *tools.Context, args map[string]any) tools.Observation {
 	command := tools.StringArg(args, "command", "")
-	decision := ctx.Policy.ShellDecision(command)
+	cwdRaw := tools.StringArg(args, "cwd", ".")
+	cwd, err := ctx.SafePathForTool("run_shell", cwdRaw, "shell_cwd")
+	if err != nil {
+		return tools.Fail("run_shell", err.Error(), map[string]any{"command": command})
+	}
+	info, err := os.Stat(cwd)
+	if err != nil || !info.IsDir() {
+		return tools.Fail("run_shell", "cwd is not a directory: "+cwdRaw, map[string]any{"command": command})
+	}
+	decision := ctx.Policy.ShellDecisionInDir(command, cwd)
 	if !decision.Allowed {
 		if !decision.Escalatable {
 			return tools.Fail("run_shell", decision.Reason, map[string]any{"command": command})
@@ -51,15 +60,6 @@ func runShell(ctx *tools.Context, args map[string]any) tools.Observation {
 				"approval_source": approvalDecision.Source,
 			})
 		}
-	}
-	cwdRaw := tools.StringArg(args, "cwd", ".")
-	cwd, err := ctx.SafePathForTool("run_shell", cwdRaw, "shell_cwd")
-	if err != nil {
-		return tools.Fail("run_shell", err.Error(), map[string]any{"command": command})
-	}
-	info, err := os.Stat(cwd)
-	if err != nil || !info.IsDir() {
-		return tools.Fail("run_shell", "cwd is not a directory: "+cwdRaw, map[string]any{"command": command})
 	}
 	argv, shellMode, err := commandArgv(command, decision.Code)
 	if err != nil {

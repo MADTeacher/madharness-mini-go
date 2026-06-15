@@ -37,7 +37,11 @@ func (c *StdioClient) readStdout() {
 func (c *StdioClient) dispatchStdoutMessage(message map[string]any) {
 	if isServerRequest(message) {
 		methodName, _ := message["method"].(string)
-		if err := c.send(methodNotFoundResponse(message["id"], methodName)); err != nil {
+		response := methodNotFoundResponse(message["id"], methodName)
+		if methodName == "ping" {
+			response = emptyResultResponse(message["id"])
+		}
+		if err := c.send(response); err != nil {
 			c.failPending(err)
 		}
 		return

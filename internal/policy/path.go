@@ -46,12 +46,23 @@ func (p *Policy) SafePath(raw string) (string, error) {
 
 // SafePathDecision проверяет путь и помечает protected path как эскалируемый.
 func (p *Policy) SafePathDecision(raw string) PathDecision {
+	return p.SafePathDecisionFrom(p.root, raw)
+}
+
+// SafePathDecisionFrom проверяет путь так, как его увидит процесс из base.
+func (p *Policy) SafePathDecisionFrom(base string, raw string) PathDecision {
 	if raw == "" {
 		return PathDecision{Decision: deny("empty_path", "empty path", false)}
 	}
-	path := raw
+	path := expandHome(raw)
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(p.root, raw)
+		if base == "" {
+			base = p.root
+		}
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(p.root, base)
+		}
+		path = filepath.Join(base, path)
 	}
 	path = filepath.Clean(path)
 	rel, err := filepath.Rel(p.root, path)

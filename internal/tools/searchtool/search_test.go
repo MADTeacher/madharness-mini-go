@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
 	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
+	"github.com/MADTeacher/madharness-mini-go/internal/workspace"
 )
 
 func TestSearchCodeSkipsSymlinkOutsideWorkspace(t *testing.T) {
@@ -40,6 +42,30 @@ func TestSearchCodeUsesBoundedPrefix(t *testing.T) {
 	}
 }
 
+func TestSearchCodeWaitsBehindConflictingWriteLock(t *testing.T) {
+	cfg := testSearchToolConfig(t)
+	path := filepath.Join(cfg.Root, "locked.txt")
+	if err := os.WriteFile(path, []byte("NEEDLE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scheduler := workspace.NewScheduler()
+	unlock := scheduler.Acquire(workspace.LockWrite, []string{path})
+	ctx := testSearchToolContext(cfg)
+	ctx.Scheduler = scheduler
+	done := make(chan tools.Observation, 1)
+
+	go func() {
+		done <- searchCode(ctx, map[string]any{"query": "NEEDLE", "glob": "*.txt"})
+	}()
+
+	assertSearchStillBlocked(t, done)
+	unlock()
+	obs := waitSearchDone(t, done)
+	if obs["ok"] != true || len(obs["results"].([]map[string]any)) != 1 {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
 func testSearchToolConfig(t *testing.T) *config.Config {
 	t.Helper()
 	t.Setenv("MADHARNESS_MINI_MODEL", "")
@@ -61,5 +87,25 @@ func mustSymlink(t *testing.T, oldname string, newname string) {
 	t.Helper()
 	if err := os.Symlink(oldname, newname); err != nil {
 		t.Skipf("symlink is not available: %v", err)
+	}
+}
+
+func assertSearchStillBlocked(t *testing.T, done <-chan tools.Observation) {
+	t.Helper()
+	select {
+	case obs := <-done:
+		t.Fatalf("search_code finished before conflicting write lock was released: %+v", obs)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func waitSearchDone(t *testing.T, done <-chan tools.Observation) tools.Observation {
+	t.Helper()
+	select {
+	case obs := <-done:
+		return obs
+	case <-time.After(time.Second):
+		t.Fatal("search_code did not finish after write lock was released")
+		return nil
 	}
 }

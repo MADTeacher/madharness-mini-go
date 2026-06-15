@@ -27,8 +27,7 @@ func listFiles(ctx *tools.Context, args map[string]any) tools.Observation {
 	source := base
 	info, err := os.Stat(source)
 	if err != nil {
-		source = ctx.Config.Root
-		info, _ = os.Stat(source)
+		return tools.Fail("list_files", "cannot list path: "+tools.StringArg(args, "path", ".")+": "+err.Error())
 	}
 	if info != nil && !info.IsDir() {
 		release := ctx.LockWorkspaceRead("list_files", source)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,7 +46,13 @@ func LoadServerConfigs(cfg *config.Config, pol *policy.Policy) ([]ServerConfig, 
 		return nil, fmt.Errorf("invalid MCP config: servers must be object")
 	}
 	configs := []ServerConfig{}
-	for name, rawItem := range servers {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		rawItem := servers[name]
 		if !safeServerName(name) {
 			return nil, fmt.Errorf("invalid MCP server name: %s", name)
 		}

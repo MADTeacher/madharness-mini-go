@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -113,6 +114,100 @@ func TestTraceSpanNestingAndSummary(t *testing.T) {
 	}
 }
 
+func TestTraceWriteRedactsSensitiveEventPayloads(t *testing.T) {
+	cfg := testTraceConfig(t)
+	tr, err := New(cfg, "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := []struct {
+		name   string
+		fields map[string]any
+	}{
+		{
+			name: "model_call_finished",
+			fields: map[string]any{"message": map[string]any{
+				"role":    "assistant",
+				"content": "OPENAI_API_KEY=sk-model-secret-123456",
+			}},
+		},
+		{
+			name: "approval_request",
+			fields: map[string]any{
+				"tool":    "run_shell",
+				"subject": `curl -H "Authorization: Bearer sk-approval-request-123456" https://example.test/v1`,
+			},
+		},
+		{
+			name: "approval_decision",
+			fields: map[string]any{
+				"tool":    "write_file",
+				"message": "password=trace-decision-secret",
+			},
+		},
+		{
+			name: "tool_observation",
+			fields: map[string]any{
+				"tool": "write_file",
+				"args": map[string]any{
+					"path":    "config.env",
+					"content": "refresh_token: ghp_trace_tool_token_123456",
+				},
+				"observation": map[string]any{"summary": "wrote config.env"},
+			},
+		},
+		{
+			name: "process_output",
+			fields: map[string]any{
+				"process_id": "proc-1",
+				"stream":     "stdout",
+				"content":    "Bearer sk-process-output-123456",
+			},
+		},
+	}
+	for _, event := range events {
+		if err := tr.Write(event.name, event.fields); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rendered := renderTraceEventsJSON(t, readTraceEvents(t, tr.Path))
+	for _, leak := range []string{
+		"sk-model-secret-123456",
+		"sk-approval-request-123456",
+		"trace-decision-secret",
+		"ghp_trace_tool_token_123456",
+		"sk-process-output-123456",
+	} {
+		if strings.Contains(rendered, leak) {
+			t.Fatalf("trace leaked %q:\n%s", leak, rendered)
+		}
+	}
+	for _, keep := range []string{
+		"OPENAI_API_KEY=<redacted>",
+		"Authorization: Bearer <redacted>",
+		"password=<redacted>",
+		"refresh_token: <redacted>",
+		"Bearer <redacted>",
+		"wrote config.env",
+	} {
+		if !strings.Contains(rendered, keep) {
+			t.Fatalf("trace lost useful context %q:\n%s", keep, rendered)
+		}
+	}
+}
+
+func renderTraceEventsJSON(t *testing.T, events []map[string]any) string {
+	t.Helper()
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(events); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
 func TestSummaryTruncatesUTF8Safely(t *testing.T) {
 	text := strings.Repeat("Ж", 1200)
 	if got := truncateRunes(text, 1000); len([]rune(got)) != 1000 || !utf8.ValidString(got) {
@@ -180,6 +275,29 @@ func TestSummarizeReadsLegacyFlatTrace(t *testing.T) {
 	}
 	if !strings.Contains(summary, "result: legacy result") {
 		t.Fatalf("summary = %s", summary)
+	}
+}
+
+func TestSummarizeRejectsTraceIDPathSeparators(t *testing.T) {
+	cfg := testTraceConfig(t)
+	cases := []string{
+		"../outside",
+		"nested/trace",
+		`nested\trace`,
+		".",
+		"..",
+		"*",
+	}
+	for _, traceID := range cases {
+		t.Run(traceID, func(t *testing.T) {
+			_, err := Summarize(cfg, traceID)
+			if err == nil {
+				t.Fatal("expected invalid trace id error")
+			}
+			if !strings.Contains(err.Error(), "invalid trace id") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

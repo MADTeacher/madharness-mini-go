@@ -67,6 +67,40 @@ func TestMCPConfigSkipsDisabledInvalidServer(t *testing.T) {
 	}
 }
 
+func TestMCPConfigOrdersEnabledServersByName(t *testing.T) {
+	cfg := testConfig(t)
+	writeMCPConfig(t, cfg, map[string]any{
+		"servers": map[string]any{
+			"zeta": map[string]any{
+				"enabled": true,
+				"command": "fake",
+				"cwd":     ".",
+			},
+			"off": map[string]any{
+				"enabled": false,
+				"command": 42,
+			},
+			"alpha": map[string]any{
+				"enabled": true,
+				"command": "fake",
+				"cwd":     ".",
+			},
+		},
+	})
+
+	configs, err := LoadServerConfigs(cfg, policy.New(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, config := range configs {
+		names = append(names, config.Name)
+	}
+	if strings.Join(names, ",") != "alpha,zeta" {
+		t.Fatalf("names = %v", names)
+	}
+}
+
 func TestMCPConfigRejectsUnsafeCWD(t *testing.T) {
 	cfg := testConfig(t)
 	writeMCPConfig(t, cfg, fakeServerConfig(t, cfg, filepath.Join(cfg.Root, "closed.txt"), map[string]any{

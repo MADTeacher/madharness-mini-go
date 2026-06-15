@@ -1,0 +1,58 @@
+[
+  {
+    "name": "authorization bearer header",
+    "payload": {
+      "tool": "run_shell",
+      "args": {
+        "command": "curl -H \"Authorization: Bearer sk-live-secret-123456\" https://example.test/v1"
+      }
+    },
+    "leaks": ["sk-live-secret-123456"],
+    "keeps": ["Authorization: Bearer <redacted>", "https://example.test/v1"]
+  },
+  {
+    "name": "assigned file secrets",
+    "payload": {
+      "tool": "write_file",
+      "args": {
+        "path": "config.env",
+        "content": "OPENAI_API_KEY=sk-file-secret-123456\nrefresh_token: ghp_file_token_123456\nnote=token budget stays visible"
+      }
+    },
+    "leaks": ["sk-file-secret-123456", "ghp_file_token_123456"],
+    "keeps": ["OPENAI_API_KEY=<redacted>", "refresh_token: <redacted>", "note=token budget stays visible"]
+  },
+  {
+    "name": "camel case sensitive keys",
+    "payload": {
+      "accessToken": "sk-access-token-123456",
+      "nested": {
+        "refreshToken": "ghp_refresh_token_123456",
+        "secretKey": "secret-key-value",
+        "note": "kept"
+      }
+    },
+    "leaks": ["sk-access-token-123456", "ghp_refresh_token_123456", "secret-key-value"],
+    "keeps": ["\"note\":\"kept\""]
+  },
+  {
+    "name": "placeholder false positives",
+    "payload": {
+      "prompt": "Discuss token budgets, bearer tokens, Authorization headers, token=demo, password=example, api_key=placeholder, secretary=alice"
+    },
+    "leaks": [],
+    "keeps": ["token=demo", "password=example", "api_key=placeholder", "secretary=alice"]
+  },
+  {
+    "name": "nested lists",
+    "payload": {
+      "items": [
+        {"name": "visible", "password": "real-password"},
+        "Bearer ghp_nested_token_123456",
+        "safe text"
+      ]
+    },
+    "leaks": ["real-password", "ghp_nested_token_123456"],
+    "keeps": ["\"name\":\"visible\"", "Bearer <redacted>", "safe text"]
+  }
+]

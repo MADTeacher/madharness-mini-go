@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -81,6 +82,9 @@ func New(cwd string) (*Config, error) {
 	if err := cfg.loadFile(); err != nil {
 		return nil, err
 	}
+	if err := cfg.validateSafetyLimits(); err != nil {
+		return nil, err
+	}
 	if err := cfg.applyEnv(); err != nil {
 		return nil, err
 	}
@@ -107,8 +111,33 @@ func (c *Config) persistentSettings() (Settings, error) {
 	if err := cfg.loadFile(); err != nil {
 		return Settings{}, err
 	}
+	if err := cfg.validateSafetyLimits(); err != nil {
+		return Settings{}, err
+	}
 	cfg.normalize()
 	return cfg.Data, nil
+}
+
+func (c *Config) validateSafetyLimits() error {
+	limits := []struct {
+		name  string
+		value int
+	}{
+		{"max_turns", c.Data.MaxTurns},
+		{"max_parallel_tool_calls", c.Data.MaxParallelToolCalls},
+		{"max_parallel_subagents", c.Data.MaxParallelSubagents},
+		{"context_max_tokens", c.Data.ContextMaxTokens},
+		{"context_keep_recent_turns", c.Data.ContextKeepRecentTurns},
+		{"subagent_max_turns", c.Data.SubagentMaxTurns},
+		{"subagent_context_max_tokens", c.Data.SubagentContextMaxTokens},
+		{"max_image_bytes", c.Data.MaxImageBytes},
+	}
+	for _, limit := range limits {
+		if limit.value < 0 {
+			return fmt.Errorf("invalid config %s: must be non-negative", limit.name)
+		}
+	}
+	return nil
 }
 
 func (c *Config) loadFile() error {

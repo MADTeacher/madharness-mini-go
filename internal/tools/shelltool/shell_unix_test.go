@@ -21,7 +21,7 @@ func TestRunShellCleansChildAfterParentExit(t *testing.T) {
 		Config: cfg,
 		Policy: policy.New(cfg),
 	}
-	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	pidFile := filepath.Join(cfg.Root, "child.pid")
 
 	obs := runShell(ctx, map[string]any{"command": helperShellToolCommand(t, "spawn-child", pidFile)})
 	if obs["ok"] != true {

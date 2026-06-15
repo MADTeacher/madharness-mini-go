@@ -17,7 +17,7 @@ func TestBeforeToolCallHookBlocksBeforeHandler(t *testing.T) {
 	}
 	cfg := testAgentConfig(t)
 	writeAgentHook(t, cfg.Root, "deny_shell.sh", "#!/bin/sh\nprintf '{\"ok\":false,\"block\":\"no shell\"}'\n")
-	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"deny-shell","event":"before_tool_call","match":{"tool":"run_shell"},"command":"./deny_shell.sh","cwd":".","timeout_seconds":3}]}`)
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"deny-shell","event":"before_tool_call","match":{"tool":"run_shell"},"command":"./deny_shell.sh","cwd":".","timeout_seconds":10}]}`)
 	client := &sequenceClient{responses: []map[string]any{
 		{"choices": []any{map[string]any{"message": map[string]any{
 			"content": nil,
@@ -57,7 +57,7 @@ func TestHookProcessFailureIsTracedWithoutBreakingAsk(t *testing.T) {
 	}
 	cfg := testAgentConfig(t)
 	writeAgentHook(t, cfg.Root, "broken_hook.sh", "#!/bin/sh\necho boom >&2\nexit 2\n")
-	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"broken","event":"before_model_call","command":"./broken_hook.sh","cwd":".","timeout_seconds":3}]}`)
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"broken","event":"before_model_call","command":"./broken_hook.sh","cwd":".","timeout_seconds":10}]}`)
 	client := &fakeClient{response: map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "ok"}}}}}
 
 	result, tracePath, err := askWithClient("hello", cfg, client)
@@ -84,7 +84,7 @@ func TestObserveBeforeToolCallHookCannotBlockHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeAgentHook(t, cfg.Root, "observe_deny.sh", "#!/bin/sh\nprintf '{\"ok\":false,\"block\":\"observe cannot block\"}'\n")
-	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"observe-deny","mode":"observe","event":"before_tool_call","match":{"tool":"read_file"},"command":"./observe_deny.sh","cwd":".","timeout_seconds":3}]}`)
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"observe-deny","mode":"observe","event":"before_tool_call","match":{"tool":"read_file"},"command":"./observe_deny.sh","cwd":".","timeout_seconds":10}]}`)
 	client := &sequenceClient{responses: []map[string]any{
 		{"choices": []any{map[string]any{"message": map[string]any{
 			"content": nil,
@@ -124,7 +124,7 @@ func TestApprovalRequestHookBlocksBeforePromptDecision(t *testing.T) {
 	}
 	cfg := testAgentConfig(t)
 	writeAgentHook(t, cfg.Root, "deny_approval.sh", "#!/bin/sh\nprintf '{\"ok\":false,\"block\":\"no approval\"}'\n")
-	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"deny-approval","event":"approval_request","match":{"tool":"run_shell"},"command":"./deny_approval.sh","cwd":".","timeout_seconds":3}]}`)
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"deny-approval","event":"approval_request","match":{"tool":"run_shell"},"command":"./deny_approval.sh","cwd":".","timeout_seconds":10}]}`)
 	client := shellThenDoneClient(`{"command":"curl --version"}`)
 
 	result, tracePath, err := runWithClientOptions("run risky", cfg, client, RunOptions{
@@ -160,7 +160,7 @@ func TestSubagentHookUsesChildTraceAndKind(t *testing.T) {
 	}
 	cfg := testAgentConfig(t)
 	writeAgentHook(t, cfg.Root, "subagent_marker.sh", "#!/bin/sh\npayload=$(cat)\nprintf '%s' \"$payload\" > subagent-hook-event.json\nprintf '{\"ok\":true,\"message\":\"seen\"}'\n")
-	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"subagent-marker","event":"session_start","match":{"kind":"subagent"},"command":"./subagent_marker.sh","cwd":".","timeout_seconds":3}]}`)
+	writeAgentHooksConfig(t, cfg.Root, `{"hooks":[{"id":"subagent-marker","event":"session_start","match":{"kind":"subagent"},"command":"./subagent_marker.sh","cwd":".","timeout_seconds":10}]}`)
 	client := &sequenceClient{responses: []map[string]any{
 		{"choices": []any{map[string]any{"message": map[string]any{
 			"content": nil,

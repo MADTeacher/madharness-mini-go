@@ -56,11 +56,12 @@ func (p *Parser) Prepare(patch string) ([]Change, error) {
 }
 
 func splitPatchLines(patch string) []string {
-	trimmed := strings.TrimRight(patch, "\n")
+	normalized := strings.ReplaceAll(patch, "\r\n", "\n")
+	trimmed := strings.TrimRight(normalized, "\n")
 	if trimmed == "" {
 		return nil
 	}
-	return strings.Split(strings.ReplaceAll(trimmed, "\r\n", "\n"), "\n")
+	return strings.Split(trimmed, "\n")
 }
 
 func (p *Parser) patchPath(raw string) (string, error) {

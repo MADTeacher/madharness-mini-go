@@ -1,9 +1,38 @@
 package hooks
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
+
+type redactionCorpusCase struct {
+	Name    string `json:"name"`
+	Payload any    `json:"payload"`
+	Leaks   []string
+	Keeps   []string
+}
+
+func TestHookPayloadUsesSharedRedactionCorpus(t *testing.T) {
+	for _, tc := range loadRedactionCorpus(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			data := capturedHookData(t, tc.Payload.(map[string]any))
+			rendered := renderHookJSON(t, data)
+			for _, leak := range tc.Leaks {
+				if strings.Contains(rendered, leak) {
+					t.Fatalf("hook payload leaked %q: %s", leak, rendered)
+				}
+			}
+			for _, keep := range tc.Keeps {
+				if !strings.Contains(rendered, keep) {
+					t.Fatalf("hook payload lost useful context %q: %s", keep, rendered)
+				}
+			}
+		})
+	}
+}
 
 func TestHookPayloadRedactsRunShellAuthorizationBearer(t *testing.T) {
 	command := `curl -H "Authorization: Bearer sk-live-secret-123456" https://example.test/v1`
@@ -59,6 +88,31 @@ func TestHookPayloadRedactsWriteFileContentSecrets(t *testing.T) {
 	}
 }
 
+func TestHookPayloadRedactsCamelCaseSecretKeys(t *testing.T) {
+	data := capturedHookData(t, map[string]any{
+		"accessToken": "sk-access-token-123456",
+		"nested": map[string]any{
+			"refreshToken": "ghp_refresh_token_123456",
+			"secretKey":    "secret-key-value",
+			"note":         "kept",
+		},
+	})
+
+	if data["accessToken"] != "<redacted>" {
+		t.Fatalf("accessToken not redacted: %#v", data["accessToken"])
+	}
+	nested := data["nested"].(map[string]any)
+	if nested["refreshToken"] != "<redacted>" {
+		t.Fatalf("refreshToken not redacted: %#v", nested["refreshToken"])
+	}
+	if nested["secretKey"] != "<redacted>" {
+		t.Fatalf("secretKey not redacted: %#v", nested["secretKey"])
+	}
+	if nested["note"] != "kept" {
+		t.Fatalf("non-secret field changed: %#v", nested["note"])
+	}
+}
+
 func TestHookPayloadKeepsNonSecretStrings(t *testing.T) {
 	prompt := "Discuss token budgets, bearer tokens, Authorization headers, token=demo, password=example, api_key=placeholder, secretary=alice"
 
@@ -84,6 +138,30 @@ func capturedHookData(t *testing.T, data map[string]any) map[string]any {
 		t.Fatal("provider did not receive hook data")
 	}
 	return provider.event.HookData
+}
+
+func loadRedactionCorpus(t *testing.T) []redactionCorpusCase {
+	t.Helper()
+	raw, err := os.ReadFile("../redaction/testdata/corpus.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []redactionCorpusCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+func renderHookJSON(t *testing.T, value any) string {
+	t.Helper()
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(buf.String())
 }
 
 type captureProvider struct {

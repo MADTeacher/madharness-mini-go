@@ -5,16 +5,18 @@ import "github.com/MADTeacher/madharness-mini-go/internal/tools"
 
 // Task описывает один tool call после разбора имени и аргументов.
 type Task struct {
-	Index       int
-	Call        map[string]any
-	Name        string
-	Args        map[string]any
-	Effect      tools.Effect
-	Runnable    bool
-	SpanID      string
-	EndSpan     func(status string, fields map[string]any)
-	Observation tools.Observation
-	Followups   []map[string]any
+	Index    int
+	Call     map[string]any
+	Name     string
+	Args     map[string]any
+	Effect   tools.Effect
+	Runnable bool
+	// RecordResult означает, что assistant history содержит парный tool_call_id.
+	RecordResult bool
+	SpanID       string
+	EndSpan      func(status string, fields map[string]any)
+	Observation  tools.Observation
+	Followups    []map[string]any
 }
 
 // Result хранит итог handler-а или заранее подготовленный отказ.

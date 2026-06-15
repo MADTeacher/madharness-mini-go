@@ -189,6 +189,65 @@ func TestShellDecisionMarksEscalatableAndStrictDenials(t *testing.T) {
 	}
 }
 
+func TestShellDecisionChecksProtectedAndOutsideFileArguments(t *testing.T) {
+	cfg := testPolicyConfig(t)
+	if err := os.WriteFile(filepath.Join(cfg.Root, ".env"), []byte("SECRET=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	subdir := filepath.Join(cfg.Root, "subdir")
+	if err := os.Mkdir(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := New(cfg)
+
+	protected := p.ShellDecision("cat .env")
+	if protected.Allowed || !protected.Escalatable || protected.Code != CodeProtectedPath {
+		t.Fatalf("protected = %#v", protected)
+	}
+	protectedFromCWD := p.ShellDecisionInDir("cat ../.env", subdir)
+	if protectedFromCWD.Allowed || !protectedFromCWD.Escalatable || protectedFromCWD.Code != CodeProtectedPath {
+		t.Fatalf("protectedFromCWD = %#v", protectedFromCWD)
+	}
+	wrappedProtected := p.ShellDecision(`sh -c "cat .env"`)
+	if wrappedProtected.Allowed || !wrappedProtected.Escalatable || wrappedProtected.Code != CodeProtectedPath {
+		t.Fatalf("wrappedProtected = %#v", wrappedProtected)
+	}
+	outside := p.ShellDecision("cat ../outside.txt")
+	if outside.Allowed || outside.Escalatable || outside.Code != CodePathOutsideWorkspace {
+		t.Fatalf("outside = %#v", outside)
+	}
+	wrappedOutside := p.ShellDecision(`sh -c "cat ../outside.txt"`)
+	if wrappedOutside.Allowed || wrappedOutside.Escalatable || wrappedOutside.Code != CodePathOutsideWorkspace {
+		t.Fatalf("wrappedOutside = %#v", wrappedOutside)
+	}
+}
+
+func TestShellDecisionUnwrapsRiskyWrapperCommands(t *testing.T) {
+	p := New(testPolicyConfig(t))
+	for _, command := range []string{
+		"env curl https://example.com",
+		"/usr/bin/env wget https://example.com",
+	} {
+		decision := p.ShellDecision(command)
+		if decision.Allowed || !decision.Escalatable || decision.Code != CodeRiskyShellCommand {
+			t.Fatalf("%q decision = %#v", command, decision)
+		}
+	}
+	for _, command := range []string{
+		`sh -c "echo ok"`,
+		`bash -c "echo ok"`,
+		`env sh -c "echo ok"`,
+	} {
+		decision := p.ShellDecision(command)
+		if decision.Allowed || !decision.Escalatable || decision.Code != CodeShellControlOperator {
+			t.Fatalf("%q decision = %#v", command, decision)
+		}
+	}
+	if decision := p.ShellDecision("env echo ok"); !decision.Allowed {
+		t.Fatalf("safe env wrapper denied: %#v", decision)
+	}
+}
+
 func TestShellControlOperatorsIgnoreQuotedAndEscapedText(t *testing.T) {
 	p := New(testPolicyConfig(t))
 	allowed := []string{

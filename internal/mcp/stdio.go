@@ -128,6 +128,7 @@ func (c *StdioClient) Request(method string, params map[string]any) (map[string]
 		return ParseResponse(incoming.message, expectedID)
 	case <-timer.C:
 		c.removePending(expectedID)
+		c.cancelTimedOutRequest(expectedID, method)
 		return nil, fmt.Errorf("MCP request timed out: %s; stderr: %s", method, c.StderrExcerpt(2000))
 	}
 }
@@ -135,6 +136,17 @@ func (c *StdioClient) Request(method string, params map[string]any) (map[string]
 // Notify отправляет JSON-RPC notification без ожидания ответа.
 func (c *StdioClient) Notify(method string, params map[string]any) error {
 	return c.send(c.rpc.Notification(method, params))
+}
+
+func (c *StdioClient) cancelTimedOutRequest(id int64, method string) {
+	params := map[string]any{
+		"requestId": id,
+		"reason":    "request timed out: " + method,
+	}
+	go func() {
+		// Таймаут уже вернётся вызывающему коду; cancellation отправляем best-effort.
+		_ = c.Notify("notifications/cancelled", params)
+	}()
 }
 
 // CallTool вызывает исходное имя MCP tool на сервере.

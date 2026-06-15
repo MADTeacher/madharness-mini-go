@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/policy"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 )
 
@@ -137,6 +139,84 @@ func TestStdioClientHandlesServerRequestDuringToolCall(t *testing.T) {
 	}
 	if text := mcpText(t, result); text != "echo:ok" {
 		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestStdioClientRespondsToServerPingWithEmptyResult(t *testing.T) {
+	cfg, marker := fakeServerWorkspace(t)
+	pingMarker := filepath.Join(cfg.Root, "mcp_ping_response.json")
+	data := fakeServerConfig(t, cfg, marker, nil)
+	server := data["servers"].(map[string]any)["fake"].(map[string]any)
+	env := server["env"].(map[string]any)
+	env["MCP_FAKE_PING_RESPONSE_MARKER"] = pingMarker
+	writeMCPConfig(t, cfg, data)
+	configs, err := LoadServerConfigs(cfg, policy.New(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewStdioClient(configs[0])
+	defer client.Close()
+	if _, err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := client.CallTool("echo", map[string]any{"text": "ok", "ping_client": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := mcpText(t, result); text != "echo:ok" {
+		t.Fatalf("text = %q", text)
+	}
+	response := readJSONWhenReady(t, pingMarker)
+	if !sameID(response["id"], fakePingRequestID) {
+		t.Fatalf("id = %v", response["id"])
+	}
+	if _, exists := response["error"]; exists {
+		t.Fatalf("ping returned error: %+v", response)
+	}
+	pingResult, ok := response["result"].(map[string]any)
+	if !ok || len(pingResult) != 0 {
+		t.Fatalf("result = %+v", response["result"])
+	}
+}
+
+func TestStdioClientSendsCancellationNotificationOnTimeout(t *testing.T) {
+	cfg, marker := fakeServerWorkspace(t)
+	cancelMarker := filepath.Join(cfg.Root, "mcp_cancel_notification.json")
+	data := fakeServerConfig(t, cfg, marker, nil)
+	server := data["servers"].(map[string]any)["fake"].(map[string]any)
+	env := server["env"].(map[string]any)
+	env["MCP_FAKE_CANCEL_MARKER"] = cancelMarker
+	writeMCPConfig(t, cfg, data)
+	configs, err := LoadServerConfigs(cfg, policy.New(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := configs[0]
+	config.Timeout = 40 * time.Millisecond
+	client := NewStdioClient(config)
+	defer client.Close()
+	if _, err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.CallTool("echo", map[string]any{"text": "late", "delay_ms": 200}); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout err = %v", err)
+	}
+	notification := readJSONWhenReady(t, cancelMarker)
+	if notification["method"] != "notifications/cancelled" {
+		t.Fatalf("notification = %+v", notification)
+	}
+	params, ok := notification["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("params = %+v", notification["params"])
+	}
+	if _, ok := idFromAny(params["requestId"]); !ok {
+		t.Fatalf("requestId = %v", params["requestId"])
+	}
+	reason, _ := params["reason"].(string)
+	if !strings.Contains(reason, "request timed out: tools/call") {
+		t.Fatalf("reason = %q", reason)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MADTeacher/madharness-mini-go/internal/processes"
 	"github.com/MADTeacher/madharness-mini-go/internal/tools"
 )
 
@@ -66,7 +67,8 @@ func (p CommandProvider) Handle(event Event) (Decision, error) {
 	timeout := time.Duration(p.Config.TimeoutSeconds * float64(time.Second))
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, p.Config.Command, p.Config.Args...)
+	cmd := exec.Command(p.Config.Command, p.Config.Args...)
+	processes.PrepareCommand(cmd)
 	cmd.Dir = p.Config.CWD
 	cmd.Env = hookEnv(p.Config.Env)
 	cmd.Stdin = bytes.NewReader(payload)
@@ -74,7 +76,7 @@ func (p CommandProvider) Handle(event Event) (Decision, error) {
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err = runHookCommand(ctx, cmd)
 	if ctx.Err() == context.DeadlineExceeded {
 		return Allow(), fmt.Errorf("hook timed out after %ss", trimFloat(p.Config.TimeoutSeconds))
 	}
@@ -86,6 +88,31 @@ func (p CommandProvider) Handle(event Event) (Decision, error) {
 		return Allow(), fmt.Errorf("%s", detail)
 	}
 	return decisionFromStdout(stdout.String())
+}
+
+func runHookCommand(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.Wait()
+		processes.CleanupCommand(cmd)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return <-errCh
+	case <-ctx.Done():
+		processes.StopCommand(cmd, done, time.Second)
+		select {
+		case err := <-errCh:
+			return err
+		default:
+			return ctx.Err()
+		}
+	}
 }
 
 func hookPayload(event Event) map[string]any {

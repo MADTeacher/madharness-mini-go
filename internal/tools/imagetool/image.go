@@ -18,6 +18,8 @@ func readImage(ctx *tools.Context, args map[string]any) tools.Observation {
 	if err != nil {
 		return tools.Fail("read_image", err.Error())
 	}
+	release := ctx.LockWorkspaceRead("read_image", path)
+	defer release()
 	data, info, truncated, err := tools.ReadRegularFilePrefix(path, int64(ctx.Config.Data.MaxImageBytes))
 	if err != nil {
 		return tools.Fail("read_image", "not a file: "+rawPath)

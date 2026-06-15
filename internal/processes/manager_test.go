@@ -1,6 +1,7 @@
 package processes
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -146,11 +147,34 @@ func TestManagerCloseAllStopsRunningProcesses(t *testing.T) {
 	}
 }
 
+func TestPrepareCommandDoesNotInheritAPIKeys(t *testing.T) {
+	t.Setenv("MADHARNESS_MINI_API_KEY", "madharness-secret")
+	t.Setenv("OPENAI_API_KEY", "openai-secret")
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessManager", "--", "print-env")
+	PrepareCommand(cmd)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	text := stdout.String()
+	if strings.Contains(text, "MADHARNESS_MINI_API_KEY") || strings.Contains(text, "OPENAI_API_KEY") {
+		t.Fatalf("api key env leaked in stdout: %q", text)
+	}
+	if strings.Contains(text, "madharness-secret") || strings.Contains(text, "openai-secret") {
+		t.Fatalf("api key value leaked in stdout: %q", text)
+	}
+}
+
 func TestHelperProcessManager(t *testing.T) {
-	if os.Getenv("GO_WANT_PROCESS_MANAGER_HELPER") != "1" {
+	helperArgs := processManagerHelperArgs()
+	if os.Getenv("GO_WANT_PROCESS_MANAGER_HELPER") != "1" && len(helperArgs) == 0 {
 		return
 	}
-	mode := os.Args[len(os.Args)-1]
+	if len(helperArgs) == 0 {
+		t.Fatal("missing helper mode")
+	}
+	mode := helperArgs[len(helperArgs)-1]
 	switch mode {
 	case "ready":
 		fmt.Println("server ready")
@@ -165,14 +189,14 @@ func TestHelperProcessManager(t *testing.T) {
 		ignoreInterrupt()
 		time.Sleep(30 * time.Second)
 	case "mark-on-interrupt":
-		marker := os.Args[len(os.Args)-2]
+		marker := helperArgs[len(helperArgs)-2]
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, os.Interrupt)
 		fmt.Println("mark helper ready")
 		<-ch
 		_ = os.WriteFile(marker, []byte("closed"), 0o644)
 	case "spawn-descendants":
-		marker := os.Args[len(os.Args)-2]
+		marker := helperArgs[len(helperArgs)-2]
 		cmd := helperCommandForMode(marker, "child-spawn-grandchild")
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -183,7 +207,7 @@ func TestHelperProcessManager(t *testing.T) {
 		fmt.Println("descendants ready")
 		time.Sleep(30 * time.Second)
 	case "child-spawn-grandchild":
-		marker := os.Args[len(os.Args)-2]
+		marker := helperArgs[len(helperArgs)-2]
 		cmd := helperCommandForMode(marker, "grandchild-ignore-interrupt")
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -194,6 +218,8 @@ func TestHelperProcessManager(t *testing.T) {
 	case "grandchild-ignore-interrupt":
 		ignoreInterrupt()
 		time.Sleep(30 * time.Second)
+	case "print-env":
+		printLeakedProcessAPIKeys()
 	}
 	os.Exit(0)
 }
@@ -249,6 +275,24 @@ func helperCommandForMode(marker string, mode string) *exec.Cmd {
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcessManager", "--", marker, mode)
 	cmd.Env = append(os.Environ(), "GO_WANT_PROCESS_MANAGER_HELPER=1")
 	return cmd
+}
+
+func processManagerHelperArgs() []string {
+	for i, arg := range os.Args {
+		if arg == "--" && i+1 < len(os.Args) {
+			return os.Args[i+1:]
+		}
+	}
+	return nil
+}
+
+func printLeakedProcessAPIKeys() {
+	if value := os.Getenv("MADHARNESS_MINI_API_KEY"); value != "" {
+		fmt.Println("MADHARNESS_MINI_API_KEY=" + value)
+	}
+	if value := os.Getenv("OPENAI_API_KEY"); value != "" {
+		fmt.Println("OPENAI_API_KEY=" + value)
+	}
 }
 
 func waitForHelperFile(path string, timeout time.Duration) {

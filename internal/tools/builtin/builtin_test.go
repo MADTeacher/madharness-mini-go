@@ -452,8 +452,7 @@ func TestHelperBuiltinManagedShell(t *testing.T) {
 
 func helperCommand(t *testing.T, mode string) string {
 	t.Helper()
-	t.Setenv("GO_WANT_BUILTIN_MANAGED_SHELL_HELPER", "1")
-	return shellQuote(os.Args[0]) + " -test.run=TestHelperBuiltinManagedShell -- " + mode
+	return "env GO_WANT_BUILTIN_MANAGED_SHELL_HELPER=1 " + shellQuote(os.Args[0]) + " -test.run=TestHelperBuiltinManagedShell -- " + mode
 }
 
 func mustSymlink(t *testing.T, oldname string, newname string) {

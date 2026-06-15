@@ -3,14 +3,34 @@ package processes
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
+
+// safeInheritedEnv оставляет subprocess только базовое системное окружение.
+var safeInheritedEnv = map[string]bool{
+	"ComSpec":     true,
+	"HOME":        true,
+	"LANG":        true,
+	"LC_ALL":      true,
+	"PATH":        true,
+	"PATHEXT":     true,
+	"Path":        true,
+	"SystemRoot":  true,
+	"TEMP":        true,
+	"TMP":         true,
+	"TMPDIR":      true,
+	"USER":        true,
+	"USERPROFILE": true,
+	"WINDIR":      true,
+}
 
 // PrepareCommand изолирует subprocess так, чтобы lifecycle мог чистить потомков.
 func PrepareCommand(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
 	}
+	cmd.Env = processEnv(cmd.Env)
 	prepareCommand(cmd)
 }
 
@@ -49,4 +69,20 @@ func waitDone(done <-chan struct{}, timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
+}
+
+func processEnv(explicit []string) []string {
+	env := explicit
+	if env == nil {
+		env = os.Environ()
+	}
+	out := []string{}
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.HasPrefix(key, "MADHARNESS_MINI_") || !safeInheritedEnv[key] {
+			continue
+		}
+		out = append(out, key+"="+value)
+	}
+	return out
 }

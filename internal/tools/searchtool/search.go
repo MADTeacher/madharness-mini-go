@@ -29,6 +29,8 @@ func Spec() tools.Spec {
 func searchCode(ctx *tools.Context, args map[string]any) tools.Observation {
 	query := tools.StringArg(args, "query", "")
 	pattern := tools.StringArg(args, "glob", "*")
+	release := ctx.LockWorkspaceRead("search_code", ctx.Config.Root)
+	defer release()
 	matches := []map[string]any{}
 	fileTruncated := false
 	_ = filepath.WalkDir(ctx.Config.Root, func(path string, d os.DirEntry, err error) error {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MADTeacher/madharness-mini-go/internal/config"
+	"github.com/MADTeacher/madharness-mini-go/internal/redaction"
 )
 
 // Trace представляет один файл событий текущей сессии.
@@ -217,6 +218,7 @@ func (t *Trace) write(event string, fields map[string]any, spanID string, parent
 	for key, value := range fields {
 		record[key] = value
 	}
+	record = redaction.RedactPayload(record).(map[string]any)
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err

@@ -15,6 +15,8 @@ import (
 
 var fakeSendMu sync.Mutex
 
+const fakePingRequestID int64 = 9002
+
 func TestHelperProcessMCP(t *testing.T) {
 	if os.Getenv("GO_WANT_MCP_HELPER_PROCESS") != "1" {
 		return
@@ -115,6 +117,14 @@ func runFakeMCPServer() {
 
 func handleFakeMCPMessage(message map[string]any) {
 	method, _ := message["method"].(string)
+	if method == "" {
+		recordFakeClientResponse(message)
+		return
+	}
+	if method == "notifications/cancelled" {
+		recordFakeCancellation(message)
+		return
+	}
 	requestID := message["id"]
 	switch method {
 	case "initialize":
@@ -178,6 +188,15 @@ func handleFakeToolCall(message map[string]any, requestID any) {
 		})
 		time.Sleep(20 * time.Millisecond)
 	}
+	if boolArg(args, "ping_client") {
+		sendFakeMCP(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      fakePingRequestID,
+			"method":  "ping",
+			"params":  map[string]any{},
+		})
+		time.Sleep(20 * time.Millisecond)
+	}
 	text, _ := args["text"].(string)
 	content := "echo:" + text
 	if args["check_env"] == true {
@@ -202,6 +221,29 @@ func sendFakeMCP(message map[string]any) {
 	fakeSendMu.Lock()
 	defer fakeSendMu.Unlock()
 	os.Stdout.Write(append(raw, '\n'))
+}
+
+func recordFakeClientResponse(message map[string]any) {
+	id, ok := idFromAny(message["id"])
+	if !ok || id != fakePingRequestID {
+		return
+	}
+	writeFakeMarker(os.Getenv("MCP_FAKE_PING_RESPONSE_MARKER"), message)
+}
+
+func recordFakeCancellation(message map[string]any) {
+	writeFakeMarker(os.Getenv("MCP_FAKE_CANCEL_MARKER"), message)
+}
+
+func writeFakeMarker(path string, message map[string]any) {
+	if path == "" {
+		return
+	}
+	raw, err := json.Marshal(message)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, raw, 0o644)
 }
 
 func boolArg(args map[string]any, name string) bool {
@@ -236,4 +278,22 @@ func readText(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func readJSONWhenReady(t *testing.T, path string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err == nil && len(raw) > 0 {
+			message := map[string]any{}
+			if err := json.Unmarshal(raw, &message); err != nil {
+				t.Fatal(err)
+			}
+			return message
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("marker was not written: %s", path)
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -151,6 +152,35 @@ func TestMaxParallelToolCallsNormalizesToOne(t *testing.T) {
 	}
 	if cfg.Data.MaxParallelSubagents != 1 {
 		t.Fatalf("max_parallel_subagents = %d", cfg.Data.MaxParallelSubagents)
+	}
+}
+
+func TestConfigRejectsNegativeSafetyLimits(t *testing.T) {
+	cases := []string{
+		"max_turns",
+		"max_parallel_tool_calls",
+		"max_parallel_subagents",
+		"context_max_tokens",
+		"context_keep_recent_turns",
+		"subagent_max_turns",
+		"subagent_context_max_tokens",
+		"max_image_bytes",
+	}
+	for _, field := range cases {
+		t.Run(field, func(t *testing.T) {
+			cleanEnv(t)
+			root := t.TempDir()
+			mustWriteConfig(t, root, map[string]any{field: -1})
+
+			_, err := New(root)
+
+			if err == nil {
+				t.Fatal("expected negative safety limit error")
+			}
+			if !strings.Contains(err.Error(), field) {
+				t.Fatalf("error %q does not mention %s", err, field)
+			}
+		})
 	}
 }
 
